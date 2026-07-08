@@ -1,0 +1,24 @@
+# Web framework
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+
+# LangGraph + LangChain
+langgraph==0.2.56
+langchain==0.3.9
+langchain-groq==0.2.1
+langchain-core==0.3.21
+
+# Database
+sqlalchemy==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+psycopg2-binary==2.9.10
+
+# Validation & config
+pydantic==2.10.3
+pydantic-settings==2.6.1
+python-dotenv==1.0.1
+
+# Utilities
+python-multipart==0.0.20
+httpx==0.28.0
