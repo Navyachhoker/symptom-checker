@@ -1,0 +1,41 @@
+services:
+
+  # ── Backend ─────────────────────────────────────────────────
+  - type: web
+    name: medtriage-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000
+    plan: free
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: medtriage-db
+          property: connectionString
+      - key: GROQ_API_KEY
+        sync: false
+      - key: APP_ENV
+        value: production
+      - key: SECRET_KEY
+        generateValue: true
+      - key: FRONTEND_URL
+        sync: false
+
+  # ── Frontend ─────────────────────────────────────────────────
+  - type: web
+    name: medtriage-frontend
+    runtime: node
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    startCommand: npx serve -s dist -l 3000
+    plan: free
+    envVars:
+      - key: VITE_API_URL
+        sync: false
+
+# ── PostgreSQL ───────────────────────────────────────────────
+databases:
+  - name: medtriage-db
+    databaseName: triage_db
+    plan: free
