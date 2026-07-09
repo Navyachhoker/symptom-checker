@@ -1,12 +1,11 @@
 services:
 
-  # ── Backend ─────────────────────────────────────────────────
   - type: web
     name: medtriage-backend
     runtime: python
     rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000
+    buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port 8000
     plan: free
     envVars:
       - key: DATABASE_URL
@@ -21,8 +20,9 @@ services:
         generateValue: true
       - key: FRONTEND_URL
         sync: false
+      - key: PYTHON_VERSION
+        value: "3.11.9"
 
-  # ── Frontend ─────────────────────────────────────────────────
   - type: web
     name: medtriage-frontend
     runtime: node
@@ -33,8 +33,9 @@ services:
     envVars:
       - key: VITE_API_URL
         sync: false
+      - key: NODE_VERSION
+        value: "20.11.0"
 
-# ── PostgreSQL ───────────────────────────────────────────────
 databases:
   - name: medtriage-db
     databaseName: triage_db
