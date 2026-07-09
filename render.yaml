@@ -28,13 +28,13 @@ services:
     runtime: node
     rootDir: frontend
     buildCommand: npm ci && npm run build
-    startCommand: npx serve -s dist -l 3000
+    startCommand: npm start
     plan: free
     envVars:
       - key: VITE_API_URL
         sync: false
       - key: NODE_VERSION
-        value: "20.11.0"
+        value: "20.18.0"
 
 databases:
   - name: medtriage-db
