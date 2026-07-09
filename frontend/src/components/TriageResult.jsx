@@ -1,53 +1,50 @@
 import UrgencyBadge from "./UrgencyBadge";
-import { ShieldCheck } from "lucide-react";
 
-const borderColor = {
-  low:       "border-green-500/30",
-  moderate:  "border-yellow-500/30",
-  high:      "border-red-500/30",
-  emergency: "border-orange-500/30",
-};
-
-const bgColor = {
-  low:       "bg-green-500/5",
-  moderate:  "bg-yellow-500/5",
-  high:      "bg-red-500/5",
-  emergency: "bg-orange-500/5",
+const colors = {
+  low:       { border:"#166534", bg:"#0a1f12" },
+  moderate:  { border:"#92400e", bg:"#1c1500" },
+  high:      { border:"#991b1b", bg:"#1c0808" },
+  emergency: { border:"#9a3412", bg:"#1c0e05" },
 };
 
 export default function TriageResult({ outcome }) {
   if (!outcome) return null;
-
-  const border = borderColor[outcome.urgency] || "border-brand-border";
-  const bg     = bgColor[outcome.urgency]     || "bg-brand-card";
+  const c = colors[outcome.urgency] || colors.moderate;
 
   return (
-    <div className={`mx-4 mb-3 rounded-2xl border ${border} ${bg} overflow-hidden`}>
+    <div style={{
+      margin:"0 16px 12px", borderRadius:12, overflow:"hidden",
+      border:`1px solid ${c.border}`, background:c.bg, flexShrink:0,
+    }}>
 
       {/* Header */}
-      <div className="flex items-center justify-between px-5 py-3
-                      border-b border-white/5">
-        <div className="flex items-center gap-2">
-          <ShieldCheck size={15} className="text-brand-accent" />
-          <span className="text-xs font-semibold text-brand-subtle uppercase tracking-widest">
-            Triage Assessment
-          </span>
-        </div>
-        <UrgencyBadge urgency={outcome.urgency} />
+      <div style={{
+        display:"flex", alignItems:"center", justifyContent:"space-between",
+        padding:"10px 16px", borderBottom:"1px solid rgba(255,255,255,0.06)",
+      }}>
+        <span style={{
+          fontSize:11, fontWeight:600, color:"#8b949e",
+          textTransform:"uppercase", letterSpacing:"0.06em",
+          display:"flex", alignItems:"center", gap:6,
+        }}>
+          🛡 Triage Assessment
+        </span>
+        <UrgencyBadge urgency={outcome.urgency}/>
       </div>
 
       {/* Body */}
-      <div className="px-5 py-4 space-y-3">
-        <p className="text-sm text-brand-text leading-relaxed">
+      <div style={{ padding:"14px 16px" }}>
+        <p style={{ fontSize:13.5, color:"#c9d1d9", lineHeight:1.65 }}>
           {outcome.advice_text}
         </p>
         {outcome.symptoms_summary && (
-          <div className="pt-3 border-t border-white/5">
-            <p className="text-xs text-brand-muted leading-relaxed">
-              <span className="text-brand-subtle font-medium">Summary: </span>
-              {outcome.symptoms_summary}
-            </p>
-          </div>
+          <p style={{
+            marginTop:10, paddingTop:10, fontSize:12, color:"#8b949e",
+            borderTop:"1px solid rgba(255,255,255,0.06)",
+          }}>
+            <span style={{ color:"#c9d1d9", fontWeight:500 }}>Summary: </span>
+            {outcome.symptoms_summary}
+          </p>
         )}
       </div>
     </div>

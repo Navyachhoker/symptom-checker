@@ -4,24 +4,30 @@ export default {
   theme: {
     extend: {
       colors: {
-        brand: {
-          bg:      "#0a0f1a",
-          surface: "#111827",
-          card:    "#1a2233",
-          border:  "#1e2d45",
+        s: {
+          bg:      "#0d1117",
+          surface: "#161b22",
+          card:    "#1c2128",
+          border:  "#30363d",
           text:    "#e2e8f0",
-          muted:   "#64748b",
-          subtle:  "#94a3b8",
-          accent:  "#3b82f6",
-          accentHover: "#2563eb",
-        },
-        urgency: {
-          low:       { DEFAULT: "#22c55e", bg: "#052e16", border: "#166534" },
-          moderate:  { DEFAULT: "#f59e0b", bg: "#1c1105", border: "#92400e" },
-          high:      { DEFAULT: "#ef4444", bg: "#1c0505", border: "#991b1b" },
-          emergency: { DEFAULT: "#f97316", bg: "#1c0a05", border: "#9a3412" },
+          muted:   "#8b949e",
+          subtle:  "#c9d1d9",
+          accent:  "#58a6ff",
+          accentD: "#1f6feb",
         }
       },
+      fontFamily: {
+        sans: ["Inter", "system-ui", "sans-serif"],
+        mono: ["JetBrains Mono", "monospace"],
+      },
+      fontSize: {
+        "2xs": "10px",
+        xs: "11px",
+        sm: "12px",
+        base: "13px",
+        md: "14px",
+        lg: "15px",
+      }
     },
   },
   plugins: [],

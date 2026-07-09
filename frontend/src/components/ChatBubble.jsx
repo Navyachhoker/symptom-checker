@@ -1,33 +1,44 @@
 import { Bot, User } from "lucide-react";
 
-function format(text) {
-  return text
+function fmt(t) {
+  return t
     .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
     .replace(/\n/g, "<br/>");
 }
 
 export default function ChatBubble({ role, content }) {
   const isUser = role === "user";
-
   return (
-    <div className={`flex gap-3 msg-enter ${isUser ? "flex-row-reverse" : "flex-row"}`}>
+    <div style={{
+      display:"flex", gap:10, alignItems:"flex-end",
+      flexDirection: isUser ? "row-reverse" : "row",
+      animation:"fadeUp 0.18s ease forwards",
+    }}>
 
       {/* Avatar */}
-      <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center
-          justify-center shadow-lg
-          ${isUser
-            ? "bg-brand-accent text-white"
-            : "bg-brand-card border border-brand-border text-brand-accent"}`}>
-        {isUser ? <User size={14} /> : <Bot size={14} />}
+      <div style={{
+        width:30, height:30, borderRadius:"50%", flexShrink:0,
+        display:"flex", alignItems:"center", justifyContent:"center",
+        background: isUser ? "#1f6feb" : "#1c2128",
+        border: isUser ? "none" : "1px solid #30363d",
+        color: isUser ? "#fff" : "#58a6ff",
+      }}>
+        {isUser ? <User size={14}/> : <Bot size={14}/>}
       </div>
 
       {/* Bubble */}
-      <div className={`max-w-[72%] px-4 py-3 rounded-2xl text-sm leading-relaxed
-          shadow-sm chat-bubble
-          ${isUser
-            ? "bg-brand-accent text-white rounded-tr-none"
-            : "bg-brand-card border border-brand-border text-brand-text rounded-tl-none"}`}
-        dangerouslySetInnerHTML={{ __html: format(content) }}
+      <div
+        style={{
+          maxWidth:"70%", padding:"10px 14px", fontSize:13.5,
+          lineHeight:1.65, borderRadius:16,
+          borderBottomRightRadius: isUser ? 4 : 16,
+          borderBottomLeftRadius:  isUser ? 16 : 4,
+          background: isUser ? "#1f6feb" : "#1c2128",
+          color: isUser ? "#fff" : "#e2e8f0",
+          border: isUser ? "none" : "1px solid #30363d",
+          wordBreak:"break-word",
+        }}
+        dangerouslySetInnerHTML={{ __html: fmt(content) }}
       />
     </div>
   );

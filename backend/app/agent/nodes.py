@@ -2,6 +2,7 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_groq import ChatGroq
 from app.agent.state import TriageState
 from app.config import settings
+import re
 
 # ── Shared LLM instance ─────────────────────────────────────
 llm = ChatGroq(
@@ -67,17 +68,20 @@ After your response, on a NEW LINE output a JSON block like:
             pass  # extraction failed, carry forward existing state
 
     # Strip the <extract> block from the visible reply
-    visible_reply = raw.split("<extract>")[0].strip()
+
+    # Strip extraction block from visible reply
+    visible_reply = re.sub(r"<extract>.*?</extract>", "", raw, flags=re.DOTALL).strip()
+    visible_reply = re.sub(r"\{[\s\S]*?\}", "", visible_reply).strip()
 
     return {
-        "messages":           [AIMessage(content=visible_reply)],
-        "symptoms":           symptoms,
-        "duration":           duration,
-        "severity":           severity,
-        "age":                age,
+        "messages":            [AIMessage(content=visible_reply)],
+        "symptoms":            symptoms,
+        "duration":            duration,
+        "severity":            severity,
+        "age":                 age,
         "existing_conditions": existing_conds,
         "awaiting_user_input": True,
-        "triage_complete":    False,
+        "triage_complete":     False,
     }
 
 
