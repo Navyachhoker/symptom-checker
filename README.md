@@ -1,4 +1,4 @@
-# 🩺 AI Medical Triage Agent
+# AI Medical Triage Agent
 
 ### LangGraph · FastAPI · PostgreSQL · Groq LLM
 
@@ -6,7 +6,7 @@
 
 ---
 
-## 📌 Overview
+##  Overview
 
 This project implements a lightweight medical triage assistant that engages users in a structured conversation to assess symptom severity and recommend appropriate next steps. The agent intelligently decides when it has gathered enough context to issue a triage decision — and when it needs to ask one more targeted question first.
 
@@ -14,7 +14,7 @@ This project implements a lightweight medical triage assistant that engages user
 
 ---
 
-## ✨ Highlights
+##  Highlights
 
 - Built a stateful AI agent using LangGraph
 - Designed a multi-turn symptom assessment workflow
@@ -33,7 +33,7 @@ Always consult a qualified healthcare professional for medical concerns.
 
 ---
 
-## 🧠 How It Works
+##  How It Works
 
 ```
 1. User submits symptoms via POST /chat
@@ -48,7 +48,7 @@ Always consult a qualified healthcare professional for medical concerns.
 
 ---
 
-## 🏗️ Architecture
+##  Architecture
 
 ```
 User
@@ -78,7 +78,7 @@ POST /chat  (FastAPI + Uvicorn)
 
 ---
 
-## 🔄 LangGraph Concepts Demonstrated
+##  LangGraph Concepts Demonstrated
 
 This project showcases several core LangGraph concepts:
 
@@ -90,8 +90,75 @@ This project showcases several core LangGraph concepts:
 - Structured state propagation across nodes
 
 ---
+## Known Limitations
 
-## 🗂️ Project Structure
+This section documents the current limitations of the system honestly.
+Understanding the boundaries of an AI system is as important as understanding its capabilities.
+
+### Clinical reliability
+
+The triage classifications produced by this system have not been validated
+against clinical guidelines or reviewed by medical professionals. The underlying
+language model (Llama 3.3 70B via Groq) can produce plausible-sounding but
+incorrect urgency assessments, particularly for edge cases, rare conditions,
+or symptoms that require physical examination to evaluate.
+
+The evaluation suite scores 100% on 10 fixed scenarios, but this measures
+consistency against pre-defined expected outputs — not clinical accuracy.
+A score of 100% on the eval suite does not mean the system is safe for
+real medical use.
+
+### Hallucination risk
+
+Large language models can hallucinate. The triage decision node may:
+- Assign an incorrect urgency level with high stated confidence
+- Generate advice that sounds authoritative but is clinically wrong
+- Miss critical symptoms that were mentioned but not weighted correctly
+- Produce different urgency classifications for the same symptoms across runs
+  (mitigated by setting temperature to 0.1, but not eliminated)
+
+### No memory across sessions
+
+Each session is independent. The system has no knowledge of a user's
+medical history from previous sessions. A user who disclosed a heart
+condition in one session will need to mention it again in a new session.
+
+### No authentication beyond token scoping
+
+The current auth implementation uses a UUID token stored in localStorage.
+This is not cryptographically secured authentication. The token can be
+copied between browsers, lost on browser data clear, or accessed by
+other scripts running on the same origin. It provides session isolation
+for demonstration purposes only — not production-grade user authentication.
+
+### Single point of failure on Groq
+
+The system has no fallback LLM provider. If the Groq API is unavailable,
+all triage functionality fails. There is no retry logic, circuit breaker,
+or degraded-mode response. For production use, a fallback provider
+(e.g. OpenAI or Anthropic) should be configured.
+
+### Free tier constraints
+
+Both the backend and the PostgreSQL database are hosted on Render's free tier.
+The backend service spins down after 15 minutes of inactivity, causing the
+first request after idle to take 30-50 seconds. The free PostgreSQL instance
+has a 1GB storage limit and will be deleted after 90 days of inactivity
+on Render's free plan.
+
+### What would be required for production use
+
+- Clinical validation of triage outputs against established triage protocols
+  such as the Manchester Triage System or ESI
+- Review and sign-off by licensed medical professionals
+- Robust authentication with server-side session management
+- Fallback LLM provider with retry logic and circuit breaking
+- Monitoring and alerting on triage outcome distributions
+- A feedback mechanism for users to flag incorrect assessments
+- Compliance review for any jurisdiction where medical software is regulated
+  (e.g. CDSCO in India, FDA in the US, CE marking in Europe)
+
+##  Project Structure
 
 ```
 symptom-checker/
@@ -120,7 +187,7 @@ symptom-checker/
 
 ---
 
-## ⚙️ Tech Stack
+##  Tech Stack
 
 | Layer | Technology | Notes |
 |---|---|---|
@@ -132,7 +199,7 @@ symptom-checker/
 
 ---
 
-## 🚀 Setup & Run
+##  Setup & Run
 
 ### 1. Clone the repository
 
@@ -190,7 +257,7 @@ Open the auto-generated interactive docs at:
 
 ---
 
-## 📬 Sample Conversation
+##  Sample Conversation
 
 The agent maintains session state across turns, enabling a coherent multi-message triage flow.
 
@@ -232,7 +299,7 @@ POST /chat
 
 
 
-## 📡 API Reference
+##  API Reference
 
 | Method | Endpoint | Description |
 |---|---|---|
@@ -243,8 +310,6 @@ Request and response schemas are defined in `schemas/models.py` and browsable at
 
 ---
 
-## 👩‍💻 Author
+## 👩 Author
 
 **Navya Chhoker**  
-B.Tech CSE (Data Science) · Gautam Buddha University  
-Research interests: AI for healthcare applications
