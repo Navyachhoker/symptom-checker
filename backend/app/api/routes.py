@@ -181,6 +181,7 @@ async def chat(
         reply=reply,
         triage_outcome=triage_out,
         is_complete=result.get("triage_complete", False),
+        agent_trace=result.get("trace", []),
     )
 
 
