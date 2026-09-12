@@ -204,3 +204,4 @@ SAFETY RULE: The following symptoms MUST result in emergency urgency:
         "triage_complete":     True,
         "awaiting_user_input": False,
     }
+
