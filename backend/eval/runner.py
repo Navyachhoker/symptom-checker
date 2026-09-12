@@ -1,9 +1,3 @@
-"""
-Runs a single test case directly through the triage decision node.
-In the eval we skip intake and followup — test cases already contain
-complete clinical information, so we go straight to triage.
-"""
-
 import time
 from langchain_core.messages import HumanMessage, AIMessage
 from app.agent.nodes import triage_decision_node
@@ -11,43 +5,33 @@ from app.agent.state import TriageState
 
 
 async def run_single(case: dict) -> dict:
-    """
-    Builds a fully populated state from the test case input
-    and invokes the triage decision node directly.
-    This avoids the intake/followup pipeline which requires
-    multi-turn conversation to extract symptoms.
-    """
-
-    # Pre-populate state as if intake + followup already ran
-    # The test case inputs contain all clinical info inline
     state: TriageState = {
-        "messages": [HumanMessage(content=case["input"])],
-
-        # Extract key fields directly from the test input
-        # so triage_decision_node has what it needs
+        "messages":            [HumanMessage(content=case["input"])],
         "symptoms":            [case["description"]],
         "duration":            "as described in message",
         "severity":            "as described in message",
         "age":                 "as described in message",
         "existing_conditions": [],
-
-        "follow_up_count":     3,       # signals followup is done
+        "step_count":          3,
+        "confidence":          0,
+        "differential":        [],
+        "specialist_called":   None,
+        "tool_calls":          [],
+        "needs_escalation":    False,
+        "trace":               [],
         "awaiting_user_input": False,
         "triage_complete":     False,
+        "questions_asked":     2,
         "urgency":             None,
-        "confidence":          None,
+        "safety_approved":     False,
         "advice":              None,
         "symptoms_summary":    None,
     }
 
-    start = time.time()
-
-    # Call triage node directly
+    start  = time.time()
     result = await triage_decision_node(state)
-
     elapsed = round(time.time() - start, 2)
 
-    # Extract last non-empty AI reply
     ai_messages = [
         m for m in result.get("messages", [])
         if isinstance(m, AIMessage) and m.content.strip()

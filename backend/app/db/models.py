@@ -66,6 +66,7 @@ class TriageOutcome(Base):
     session_id  = Column(UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"),
                          nullable=False, index=True)
     urgency     = Column(SAEnum(UrgencyLevel), nullable=False)
+    confidence       = Column(Integer, nullable=True) 
     advice_text = Column(Text, nullable=False)
     symptoms_summary = Column(Text, nullable=True)    # brief summary of reported symptoms
     created_at  = Column(DateTime, default=datetime.utcnow, nullable=False)
