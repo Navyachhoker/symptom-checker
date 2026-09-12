@@ -1,25 +1,47 @@
-from typing import TypedDict, List, Optional, Annotated
+from typing import TypedDict, List, Optional, Annotated, Dict, Any
 from langchain_core.messages import BaseMessage
 import operator
 
 
+class AgentTrace(TypedDict):
+    """Records a single decision made during the planning loop."""
+    step:        int
+    agent:       str        # orchestrator / cardiac / respiratory / safety / tool
+    action:      str        # ask_question / call_specialist / call_tool / conclude
+    reasoning:   str        # why this action was taken
+    output:      str        # what was produced
+    confidence:  Optional[int]
+
+
 class TriageState(TypedDict):
-    # Full conversation history (LangChain message objects)
+    # ── Conversation ──────────────────────────────────────────
     messages: Annotated[List[BaseMessage], operator.add]
 
-    # Extracted symptom info
-    symptoms: List[str]                  # e.g. ["headache", "blurry vision"]
-    duration: Optional[str]              # e.g. "2 days"
-    severity: Optional[str]              # e.g. "7/10"
-    age: Optional[str]
-    existing_conditions: List[str]       # e.g. ["diabetes", "hypertension"]
+    # ── Extracted clinical fields ─────────────────────────────
+    symptoms:            List[str]
+    duration:            Optional[str]
+    severity:            Optional[str]
+    age:                 Optional[str]
+    existing_conditions: List[str]
 
-    # Conversation control
-    follow_up_count: int                 # how many follow-ups asked so far
-    awaiting_user_input: bool            # pause graph, wait for next message
-    triage_complete: bool                # True = ready to give final verdict
+    # ── Orchestrator planning state ───────────────────────────
+    step_count:          int          # how many planning steps taken
+    confidence:          int          # 0-100, orchestrator's current confidence
+    differential:        List[str]    # possible conditions being considered
+    specialist_called:   Optional[str]  # which specialist was invoked
+    tool_calls:          List[str]    # tools invoked this session
+    needs_escalation:    bool         # safety agent flagged for human handoff
 
-    # Final output
-    urgency: Optional[str]               # low / moderate / high / emergency
-    advice: Optional[str]                # full advice text
-    symptoms_summary: Optional[str]      # brief summary for DB storage
+    # ── Agent trace (full reasoning log) ─────────────────────
+    trace: Annotated[List[AgentTrace], operator.add]
+
+    # ── Conversation control ──────────────────────────────────
+    awaiting_user_input: bool
+    triage_complete:     bool
+    questions_asked:     int
+
+    # ── Final output ──────────────────────────────────────────
+    urgency:             Optional[str]
+    safety_approved:     bool         # safety agent signed off
+    advice:              Optional[str]
+    symptoms_summary:    Optional[str]
