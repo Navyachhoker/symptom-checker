@@ -5,6 +5,8 @@ from app.agent.tools import (
     identify_specialist,
     escalate_to_human,
 )
+from app.agent.graph import triage_graph
+
 
 __all__ = [
     "TriageState",
@@ -13,4 +15,5 @@ __all__ = [
     "check_red_flags",
     "identify_specialist",
     "escalate_to_human",
+    "triage_graph",
 ]
