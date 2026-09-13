@@ -38,6 +38,14 @@ llm = ChatGroq(
 MAX_STEPS          = 6     # max planning iterations before escalation
 CONFIDENCE_THRESHOLD = 75  # minimum confidence to conclude without escalation
 
+# ── Safety post-processing constants ───────────────────────────
+AI_DISCLAIMER = "This is AI-generated guidance, not a medical diagnosis. Always consult a qualified healthcare professional."
+
+DIAGNOSIS_PATTERNS = [
+    r"\byou have (a|an)\s+\w+(itis|osis|emia|pathy|attack|infection|disease|stroke)\b",
+    r"\byou are having a\b",
+]
+
 
 # ── Step 1: Extract symptoms from user message ────────────────
 async def extract_symptoms(state: TriageState) -> dict:
@@ -138,7 +146,8 @@ Current case state:
 Rules:
 1. If symptoms are missing and questions_asked < 2, ask a question
 2. If you have symptoms but no clinical score yet, run the clinical scorer tool
-3. If confidence < {CONFIDENCE_THRESHOLD} and no specialist called yet, call a specialist4. If confidence >= {CONFIDENCE_THRESHOLD} or specialist is done, conclude
+3. If confidence < {CONFIDENCE_THRESHOLD} and no specialist called yet, call a specialist
+4. If confidence >= {CONFIDENCE_THRESHOLD} or specialist is done, conclude
 5. Never ask more than 2 clarifying questions
 6. If stuck after step {MAX_STEPS - 1}, escalate
 
@@ -285,14 +294,15 @@ async def execute_action(action: dict, state: TriageState) -> dict:
         }
 
         return {
-        "messages":          [AIMessage(content=escalation["message"])],
-        "needs_escalation":  True,
-        "triage_complete":   True,
-        "awaiting_user_input": False,
-        "urgency":           state.get("urgency") or "moderate",  # never leave it None
-        "step_count":        step + 1,
-        "trace":             [trace],
-    }
+            "messages":          [AIMessage(content=escalation["message"])],
+            "needs_escalation":  True,
+            "triage_complete":   True,
+            "awaiting_user_input": False,
+            "urgency":           state.get("urgency") or "moderate",
+            "advice":            escalation.get("message", "") or "Your case has been flagged for human review.",
+            "step_count":        step + 1,
+            "trace":             [trace],
+        }
 
     # ── Conclude with triage decision ─────────────────────────
     else:
@@ -352,7 +362,7 @@ unconsciousness, seizure) MUST result in emergency urgency.
     response = await llm.ainvoke([system_prompt] + state["messages"])
     raw      = response.content
 
-    urgency    = state.get("urgency", "moderate")
+    urgency    = state.get("urgency") or "moderate"
     confidence = state.get("confidence", 70)
     advice     = ""
     summary    = ""
@@ -373,6 +383,20 @@ unconsciousness, seizure) MUST result in emergency urgency.
     if summary_match:
         summary = summary_match.group(1).strip()
 
+    # ── Safety post-processing ─────────────────────────────────
+    # Guarantee the AI disclaimer is present regardless of whether
+    # the LLM remembered to include it.
+    if AI_DISCLAIMER.lower() not in advice.lower():
+        advice = f"{advice} {AI_DISCLAIMER}"
+
+    # Flag (don't auto-rewrite) any diagnosis-style phrasing so it
+    # can be reviewed — auto-rewriting risks mangling urgent advice.
+    diagnosis_flag = None
+    for pattern in DIAGNOSIS_PATTERNS:
+        if re.search(pattern, advice, re.IGNORECASE):
+            diagnosis_flag = f"Diagnosis-language pattern matched: {pattern}"
+            break
+
     urgency_labels = {
         "low":       "Low urgency",
         "moderate":  "Moderate urgency",
@@ -391,6 +415,17 @@ unconsciousness, seizure) MUST result in emergency urgency.
         "confidence": confidence,
     }
 
+    traces = [trace]
+    if diagnosis_flag:
+        traces.append({
+            "step":       step,
+            "agent":      "orchestrator",
+            "action":     "diagnosis_language_flag",
+            "reasoning":  diagnosis_flag,
+            "output":     advice,
+            "confidence": confidence,
+        })
+
     return {
         "messages":            [AIMessage(content=final_message)],
         "urgency":             urgency,
@@ -400,7 +435,7 @@ unconsciousness, seizure) MUST result in emergency urgency.
         "triage_complete":     True,
         "awaiting_user_input": False,
         "step_count":          step + 1,
-        "trace":               [trace],
+        "trace":               traces,
     }
 
 
@@ -426,7 +461,8 @@ async def orchestrator_node(state: TriageState) -> dict:
             "Based on the symptoms you have described, this is a medical emergency. "
             "Please call emergency services (999 / 112 / 911) immediately. "
             "Do not wait. This is not a situation where AI triage is appropriate — "
-            "you need immediate human medical intervention."
+            "you need immediate human medical intervention. "
+            f"{AI_DISCLAIMER}"
         )
         trace: AgentTrace = {
             "step":       0,

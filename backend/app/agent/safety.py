@@ -55,6 +55,7 @@ async def safety_review(state: TriageState) -> dict:
       final output, not the original)
     """
     original_urgency   = state.get("urgency") or "moderate"
+    original_advice    = state.get("advice") or ""
     original_confidence = state.get("confidence", 70)
     step               = state.get("step_count", 0)
 
@@ -113,7 +114,7 @@ async def safety_review(state: TriageState) -> dict:
                 }
 
                 upgraded_advice = (
-                    f"{state.get('advice', '')} "
+                    f"{original_advice} "
                     f"IMPORTANT: The safety review system has identified additional "
                     f"risk factors and upgraded this assessment to emergency. "
                     f"Please call emergency services immediately."
@@ -149,7 +150,7 @@ on an AI triage decision before it is shown to a patient.
 Original triage decision:
 - Urgency: {original_urgency}
 - Confidence: {original_confidence}%
-- Advice given: {state.get('advice', 'not available')}
+- Advice given: {original_advice or 'not available'}
 
 Patient information:
 - Symptoms: {state.get('symptoms', [])}
@@ -220,7 +221,7 @@ FLAG:
             upgrade_note = f" Note from safety review: {flag}"
 
         upgraded_advice = (
-            f"{state.get('advice', '')} "
+            f"{original_advice} "
             f"The safety review system has upgraded this assessment "
             f"from {original_urgency} to {final_urgency}.{upgrade_note}"
         )
