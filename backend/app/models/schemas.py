@@ -1,8 +1,9 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
 from typing import Optional, List, Any
 from uuid import UUID
 from enum import Enum
+import re
 
 
 class UrgencyLevel(str, Enum):
@@ -21,6 +22,16 @@ class MessageRole(str, Enum):
 class ChatRequest(BaseModel):
     message:    str            = Field(..., min_length=1, max_length=2000)
     session_id: Optional[UUID] = Field(None)
+
+    @field_validator("message")
+    @classmethod
+    def sanitize_message(cls, v: str) -> str:
+        v = re.sub(r"<[^>]+>", "", v)
+        v = v.replace("\x00", "")
+        v = " ".join(v.split())
+        if not v:
+            raise ValueError("Message cannot be empty after sanitization")
+        return v
 
 
 class MessageOut(BaseModel):
@@ -55,8 +66,8 @@ class ChatResponse(BaseModel):
     session_id:     UUID
     reply:          str
     triage_outcome: Optional[TriageOutcomeOut]
-    is_complete:    bool          = False
-    agent_trace:    List[Any]     = []
+    is_complete:    bool      = False
+    agent_trace:    List[Any] = []
     model_config = {"from_attributes": True}
 
 

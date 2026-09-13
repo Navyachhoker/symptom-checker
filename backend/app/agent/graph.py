@@ -5,15 +5,10 @@ from app.agent.safety import safety_review
 
 
 def route_after_orchestrator(state: TriageState) -> str:
-    """
-    If orchestrator is waiting for user input → END this turn.
-    If triage is complete → END.
-    Otherwise → run orchestrator again.
-    """
     if state.get("awaiting_user_input"):
         return END
     if state.get("triage_complete"):
-        return END
+        return "safety_agent"
     return "orchestrator"
 
 

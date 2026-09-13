@@ -4,6 +4,8 @@ from sqlalchemy import select, func
 from langchain_core.messages import HumanMessage, AIMessage
 from uuid import UUID, uuid4
 from typing import Optional
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.db.database import get_db
 from app.db.models import Session as DBSession, Message, TriageOutcome, MessageRole, UrgencyLevel
@@ -14,15 +16,14 @@ from app.models.schemas import (
 )
 from app.agent import triage_graph, TriageState
 
-router = APIRouter()
+router  = APIRouter()
+limiter = Limiter(key_func=get_remote_address)
 
 
-# ── Helper: user token ────────────────────────────────────────
 def get_user_token(x_user_token: Optional[str] = Header(None)) -> Optional[str]:
     return x_user_token
 
 
-# ── Helper: load conversation ─────────────────────────────────
 async def load_conversation(session_id: UUID, db: AsyncSession):
     result = await db.execute(
         select(Message)
@@ -30,18 +31,15 @@ async def load_conversation(session_id: UUID, db: AsyncSession):
         .order_by(Message.order)
     )
     messages = result.scalars().all()
-
     lc_messages = []
     for m in messages:
         if m.role == MessageRole.USER:
             lc_messages.append(HumanMessage(content=m.content))
         elif m.role == MessageRole.ASSISTANT:
             lc_messages.append(AIMessage(content=m.content))
-
     return messages, lc_messages
 
 
-# ── Helper: save message ──────────────────────────────────────
 async def save_message(db, session_id, role, content, order):
     msg = Message(
         id=uuid4(),
@@ -54,20 +52,18 @@ async def save_message(db, session_id, role, content, order):
     return msg
 
 
-# ─────────────────────────────────────────────────────────────
-# POST /chat
-# ─────────────────────────────────────────────────────────────
+# ── POST /chat — 20/minute ────────────────────────────────────
 @router.post("/chat", response_model=ChatResponse)
+@limiter.limit("20/minute")
 async def chat(
-    request: ChatRequest,
-    req: Request,
+    body: ChatRequest,          # ← renamed from request to body
+    request: Request,           # ← this is now the FastAPI Request for slowapi
     db: AsyncSession = Depends(get_db),
     user_token: Optional[str] = Depends(get_user_token),
 ):
-    # 1. Resolve or create session
-    if request.session_id:
+    if body.session_id:         # ← use body.session_id
         session_result = await db.execute(
-            select(DBSession).where(DBSession.id == request.session_id)
+            select(DBSession).where(DBSession.id == body.session_id)
         )
         db_session = session_result.scalar_one_or_none()
         if not db_session:
@@ -77,62 +73,43 @@ async def chat(
     else:
         db_session = DBSession(
             id=uuid4(),
-            user_identifier=user_token or req.client.host,
+            user_identifier=user_token or request.client.host,
         )
         db.add(db_session)
         await db.flush()
 
     session_id = db_session.id
-
-    # 2. Load history
     existing_msgs, lc_history = await load_conversation(session_id, db)
     current_order = len(existing_msgs)
 
-    # 3. Save user message
-    await save_message(
-        db, session_id, MessageRole.USER, request.message, current_order
-    )
+    await save_message(db, session_id, MessageRole.USER, body.message, current_order)
     current_order += 1
 
-    # 4. Build initial state for orchestrator
     agent_state: TriageState = {
-        # Conversation
-        "messages":            lc_history + [HumanMessage(content=request.message)],
-
-        # Clinical fields — carry forward from previous turns if resuming
+        "messages":            lc_history + [HumanMessage(content=body.message)],
         "symptoms":            [],
         "duration":            None,
         "severity":            None,
         "age":                 None,
         "existing_conditions": [],
-
-        # Orchestrator planning
         "step_count":          0,
         "confidence":          0,
         "differential":        [],
         "specialist_called":   None,
         "tool_calls":          [],
         "needs_escalation":    False,
-
-        # Trace
         "trace":               [],
-
-        # Control
         "awaiting_user_input": False,
         "triage_complete":     False,
         "questions_asked":     max(0, (current_order // 2) - 1),
-
-        # Output
         "urgency":             None,
         "safety_approved":     False,
         "advice":              None,
         "symptoms_summary":    None,
     }
 
-    # 5. Run the orchestrator graph
     result = await triage_graph.ainvoke(agent_state)
 
-    # 6. Extract reply — last non-empty AI message
     all_ai = [
         m for m in result["messages"]
         if isinstance(m, AIMessage) and m.content.strip()
@@ -141,13 +118,8 @@ async def chat(
         raise HTTPException(status_code=500, detail="Agent returned no response")
 
     reply = all_ai[-1].content
+    await save_message(db, session_id, MessageRole.ASSISTANT, reply, current_order)
 
-    # 7. Save assistant message
-    await save_message(
-        db, session_id, MessageRole.ASSISTANT, reply, current_order
-    )
-
-    # 8. Save triage outcome if complete
     triage_out = None
     if result.get("triage_complete") and result.get("urgency"):
         urgency_map = {
@@ -173,6 +145,7 @@ async def chat(
             confidence=result.get("confidence"),
             advice_text=outcome.advice_text,
             symptoms_summary=outcome.symptoms_summary,
+            specialist_called=result.get("specialist_called"),
             created_at=outcome.created_at,
         )
 
@@ -185,12 +158,12 @@ async def chat(
     )
 
 
-# ─────────────────────────────────────────────────────────────
-# GET /history/{session_id}
-# ─────────────────────────────────────────────────────────────
+# ── GET /history/{session_id} — 30/minute ────────────────────
 @router.get("/history/{session_id}", response_model=HistoryResponse)
+@limiter.limit("30/minute")
 async def get_history(
     session_id: UUID,
+    request: Request,                                # ← renamed from req
     db: AsyncSession = Depends(get_db),
     user_token: Optional[str] = Depends(get_user_token),
 ):
@@ -224,11 +197,11 @@ async def get_history(
     )
 
 
-# ─────────────────────────────────────────────────────────────
-# GET /sessions
-# ─────────────────────────────────────────────────────────────
+# ── GET /sessions — 30/minute ─────────────────────────────────
 @router.get("/sessions", response_model=SessionListResponse)
+@limiter.limit("30/minute")
 async def list_sessions(
+    request: Request,                                # ← renamed from req
     limit: int = 20,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
@@ -256,12 +229,10 @@ async def list_sessions(
         )
 
     sessions = sessions_result.scalars().all()
-
     out = []
     for s in sessions:
         count_result = await db.execute(
-            select(func.count(Message.id))
-            .where(Message.session_id == s.id)
+            select(func.count(Message.id)).where(Message.session_id == s.id)
         )
         out.append(SessionOut(
             id=s.id,
@@ -273,9 +244,8 @@ async def list_sessions(
     return SessionListResponse(sessions=out, total=total)
 
 
-# ─────────────────────────────────────────────────────────────
-# POST /token
-# ─────────────────────────────────────────────────────────────
+# ── POST /token — 10/minute ───────────────────────────────────
 @router.post("/token")
-async def issue_token():
+@limiter.limit("10/minute")
+async def issue_token(request: Request):             # ← renamed from req
     return {"token": str(uuid4())}

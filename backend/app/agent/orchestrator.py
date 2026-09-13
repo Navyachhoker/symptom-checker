@@ -138,8 +138,7 @@ Current case state:
 Rules:
 1. If symptoms are missing and questions_asked < 2, ask a question
 2. If you have symptoms but no clinical score yet, run the clinical scorer tool
-3. If confidence < 60 and no specialist called yet, call a specialist
-4. If confidence >= {CONFIDENCE_THRESHOLD} or specialist is done, conclude
+3. If confidence < {CONFIDENCE_THRESHOLD} and no specialist called yet, call a specialist4. If confidence >= {CONFIDENCE_THRESHOLD} or specialist is done, conclude
 5. Never ask more than 2 clarifying questions
 6. If stuck after step {MAX_STEPS - 1}, escalate
 
@@ -286,13 +285,14 @@ async def execute_action(action: dict, state: TriageState) -> dict:
         }
 
         return {
-            "messages":          [AIMessage(content=escalation["message"])],
-            "needs_escalation":  True,
-            "triage_complete":   True,
-            "awaiting_user_input": False,
-            "step_count":        step + 1,
-            "trace":             [trace],
-        }
+        "messages":          [AIMessage(content=escalation["message"])],
+        "needs_escalation":  True,
+        "triage_complete":   True,
+        "awaiting_user_input": False,
+        "urgency":           state.get("urgency") or "moderate",  # never leave it None
+        "step_count":        step + 1,
+        "trace":             [trace],
+    }
 
     # ── Conclude with triage decision ─────────────────────────
     else:

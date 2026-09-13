@@ -29,10 +29,10 @@ llm = ChatGroq(
 URGENCY_ORDER = ["low", "moderate", "high", "emergency"]
 
 
-def urgency_index(level: str) -> int:
+def urgency_index(level) -> int:
     try:
-        return URGENCY_ORDER.index(level.lower())
-    except ValueError:
+        return URGENCY_ORDER.index(str(level).lower())
+    except (ValueError, AttributeError):
         return 1  # default to moderate
 
 
@@ -54,7 +54,7 @@ async def safety_review(state: TriageState) -> dict:
       (even if it overrides, the safety agent has approved the
       final output, not the original)
     """
-    original_urgency   = state.get("urgency", "moderate")
+    original_urgency   = state.get("urgency") or "moderate"
     original_confidence = state.get("confidence", 70)
     step               = state.get("step_count", 0)
 
