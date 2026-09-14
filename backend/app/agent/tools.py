@@ -183,7 +183,8 @@ async def escalate_to_human(state: TriageState) -> dict:
             "Based on the information provided, this case requires "
             "human clinical review. Please contact a medical professional "
             "directly or call your local healthcare helpline. "
-            "If symptoms are worsening, call emergency services immediately."
+            "If symptoms are worsening, call emergency services immediately. "
+            "This is AI guidance only and does not constitute a medical diagnosis."
         ),
         "reason": f"Confidence below threshold after {state.get('step_count', 0)} steps",
     }
