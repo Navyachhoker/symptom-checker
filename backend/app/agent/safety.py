@@ -22,7 +22,7 @@ llm = ChatGroq(
     api_key=settings.groq_api_key,
     model="openai/gpt-oss-120b",
     temperature=0.1,
-    max_tokens=512,
+    max_tokens=256,
 )
 
 # Urgency levels in order — used to enforce upgrades only, never downgrades
