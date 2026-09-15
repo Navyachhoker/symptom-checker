@@ -1,6 +1,6 @@
 import time
+import uuid
 import logging
-import sys
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,12 +10,9 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from app.db.database import engine, Base
 from app.api.routes import router
+from app.core.logging_config import setup_logging, set_request_id
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 limiter = Limiter(key_func=get_remote_address)
@@ -51,6 +48,12 @@ app.add_middleware(
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
+    # Short 8-char ID is plenty to grep for in logs and cheap to read
+    # aloud/copy when debugging a specific report from a user.
+    request_id = str(uuid.uuid4())[:8]
+    set_request_id(request_id)
+    request.state.request_id = request_id
+
     start    = time.time()
     response = await call_next(request)
     duration = round((time.time() - start) * 1000)
@@ -58,6 +61,7 @@ async def log_requests(request: Request, call_next):
         f"{request.method} {request.url.path} "
         f"status={response.status_code} duration={duration}ms"
     )
+    response.headers["X-Request-ID"] = request_id
     return response
 
 

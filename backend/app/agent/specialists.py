@@ -8,10 +8,13 @@ decides which one to invoke based on symptoms and confidence level.
 """
 
 import re
+import logging
 from langchain_core.messages import SystemMessage, AIMessage
 from langchain_groq import ChatGroq
 from app.agent.state import TriageState, AgentTrace
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 # ── Shared LLM ────────────────────────────────────────────────
 llm = ChatGroq(
@@ -346,5 +349,12 @@ async def call_specialist(specialist_name: str, state: TriageState) -> dict:
     Dispatches to the correct specialist by name.
     Called by the orchestrator — not hardcoded in the graph.
     """
-    fn = SPECIALIST_MAP.get(specialist_name, general_specialist)
-    return await fn(state)
+    fn     = SPECIALIST_MAP.get(specialist_name, general_specialist)
+    result = await fn(state)
+    logger.info(
+        "specialist=%s urgency=%s confidence=%s",
+        result.get("specialist_called", specialist_name),
+        result.get("urgency"),
+        result.get("confidence"),
+    )
+    return result

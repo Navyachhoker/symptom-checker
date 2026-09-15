@@ -13,10 +13,13 @@ and in a medical context a missed emergency is the worst failure mode.
 """
 
 import re
+import logging
 from langchain_core.messages import SystemMessage
 from langchain_groq import ChatGroq
 from app.agent.state import TriageState, AgentTrace
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 llm = ChatGroq(
     api_key=settings.groq_api_key,
@@ -120,6 +123,10 @@ async def safety_review(state: TriageState) -> dict:
                     f"Please call emergency services immediately."
                 )
 
+                logger.warning(
+                    "safety_agent: hard override %s -> emergency (%s)",
+                    original_urgency, override_reason,
+                )
                 return {
                     "urgency":        "emergency",
                     "confidence":     99,
@@ -180,6 +187,7 @@ FLAG:
 <Any specific concern not addressed in the original advice, or 'none'.>
 """)
 
+    logger.info("safety_agent: no hard override matched, deferring to LLM review")
     response = await llm.ainvoke([system_prompt])
     raw      = response.content
 
@@ -205,6 +213,7 @@ FLAG:
             "output":     f"Approved {original_urgency} urgency classification",
             "confidence": original_confidence,
         }
+        logger.info("safety_agent: APPROVE — %s urgency confirmed", original_urgency)
         return {
             "safety_approved": True,
             "trace":           [trace],
@@ -235,6 +244,10 @@ FLAG:
             "confidence": original_confidence,
         }
 
+        logger.warning(
+            "safety_agent: UPGRADE %s -> %s (%s)",
+            original_urgency, final_urgency, reasoning,
+        )
         return {
             "urgency":         final_urgency,
             "advice":          upgraded_advice,
