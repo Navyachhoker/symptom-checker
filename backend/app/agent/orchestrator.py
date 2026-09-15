@@ -35,7 +35,7 @@ llm = ChatGroq(
     max_tokens=1024,
 )
 
-MAX_STEPS          = 6     # max planning iterations before escalation
+MAX_STEPS          = 3     # max planning iterations before escalation
 CONFIDENCE_THRESHOLD = 75  # minimum confidence to conclude without escalation
 
 # ── Safety post-processing constants ───────────────────────────

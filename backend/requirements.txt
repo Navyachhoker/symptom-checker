@@ -7,7 +7,6 @@ langchain-core==0.3.21
 sqlalchemy==2.0.36
 asyncpg==0.29.0
 alembic==1.13.1
-psycopg2-binary==2.9.9
 pydantic==2.9.2
 pydantic-settings==2.5.2
 python-dotenv==1.0.1
