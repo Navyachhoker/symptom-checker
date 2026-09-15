@@ -15,6 +15,7 @@ than a fixed pipeline with different prompts.
 
 import re
 import json
+import logging
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain_groq import ChatGroq
 from app.agent.state import TriageState, AgentTrace
@@ -26,6 +27,8 @@ from app.agent.tools import (
 )
 from app.agent.specialists import call_specialist
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 # ── LLM ───────────────────────────────────────────────────────
 llm = ChatGroq(
@@ -84,8 +87,11 @@ Respond ONLY with a JSON object — no prose, no explanation:
         severity       = data.get("severity")  or severity
         age            = data.get("age")        or age
         existing_conds = data.get("existing_conditions", existing_conds) or existing_conds
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning(
+            "extract_symptoms: failed to parse LLM JSON output (%s). Raw response: %r",
+            exc, raw,
+        )
 
     return {
         "symptoms":            symptoms,
@@ -168,8 +174,12 @@ Respond with ONLY a JSON object:
         clean  = re.sub(r"```json|```", "", raw).strip()
         action = json.loads(clean)
         return action
-    except Exception:
+    except Exception as exc:
         # Fallback — if parse fails, conclude to avoid infinite loop
+        logger.error(
+            "orchestrator_decide: failed to parse LLM action JSON (%s). Raw response: %r",
+            exc, raw,
+        )
         return {
             "action":    "conclude",
             "reasoning": "Could not parse orchestrator decision — defaulting to conclude",
