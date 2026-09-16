@@ -43,5 +43,6 @@ class TriageState(TypedDict):
     # ── Final output ──────────────────────────────────────────
     urgency:             Optional[str]
     safety_approved:     bool         # safety agent signed off
+    safety_review_ran:   bool
     advice:              Optional[str]
     symptoms_summary:    Optional[str]

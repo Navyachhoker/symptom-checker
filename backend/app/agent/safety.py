@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 llm = ChatGroq(
     api_key=settings.groq_api_key,
     model="openai/gpt-oss-120b",
-    temperature=0.1,
+    temperature=0.0,
     max_tokens=256,
 )
 
@@ -56,6 +56,12 @@ async def safety_review(state: TriageState) -> dict:
     - Returns updated state with safety_approved = True always
       (even if it overrides, the safety agent has approved the
       final output, not the original)
+    - Every return path also sets safety_review_ran = True. This is a
+      deliberate, separate signal from safety_approved: safety_approved
+      can also be set True by the orchestrator's emergency bypass path
+      (see orchestrator.py), which never calls this function at all —
+      so safety_approved alone can't tell you whether this node executed.
+      safety_review_ran is only ever set here.
     """
     original_urgency   = state.get("urgency") or "moderate"
     original_advice    = state.get("advice") or ""
@@ -132,6 +138,7 @@ async def safety_review(state: TriageState) -> dict:
                     "confidence":     99,
                     "advice":         upgraded_advice,
                     "safety_approved": True,
+                    "safety_review_ran": True,
                     "trace":          [trace],
                 }
             else:
@@ -146,6 +153,7 @@ async def safety_review(state: TriageState) -> dict:
                 }
                 return {
                     "safety_approved": True,
+                    "safety_review_ran": True,
                     "trace":           [trace],
                 }
 
@@ -216,6 +224,7 @@ FLAG:
         logger.info("safety_agent: APPROVE — %s urgency confirmed", original_urgency)
         return {
             "safety_approved": True,
+            "safety_review_ran": True,
             "trace":           [trace],
         }
 
@@ -252,6 +261,7 @@ FLAG:
             "urgency":         final_urgency,
             "advice":          upgraded_advice,
             "safety_approved": True,
+            "safety_review_ran": True,
             "trace":           [trace],
         }
 
@@ -268,5 +278,6 @@ FLAG:
         }
         return {
             "safety_approved": True,
+            "safety_review_ran": True,
             "trace":           [trace],
         }

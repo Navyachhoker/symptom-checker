@@ -12,6 +12,7 @@ Run from backend/ with venv active:
     python -m eval.test_classification
 """
 
+import sys
 import asyncio
 import time
 from langchain_core.messages import HumanMessage, AIMessage
@@ -123,6 +124,38 @@ TEST_CASES = [
         "expected_urgency":    "emergency",
         "expected_specialist": None,
     },
+    {
+    "id": 13,
+    "category": "emergency",
+    "label": "Anaphylaxis",
+    "input": (
+        "Sudden swelling of lips and tongue after eating nuts. "
+        "Difficulty breathing."
+    ),
+    "expected_urgency": "emergency",
+    "expected_specialist": "respiratory",
+},
+{
+    "id": 14,
+    "category": "emergency",
+    "label": "Sepsis symptoms",
+    "input": (
+        "High fever, confusion, rapid breathing, "
+        "heart racing."
+    ),
+    "expected_urgency": "emergency",
+    "expected_specialist": None,
+},
+{
+    "id": 15,
+    "category": "emergency",
+    "label": "GI bleed",
+    "input": (
+        "Vomiting blood and feeling faint."
+    ),
+    "expected_urgency": "emergency",
+    "expected_specialist": None,
+},
 ]
 
 
@@ -305,7 +338,10 @@ async def run_all():
             print(f"  Got: {r['result'].get('urgency')} instead of emergency")
 
     print(f"\n{BOLD}{CYAN}{'=' * 60}{RESET}\n")
+    
+    return len(fn_cases) == 0
 
 
 if __name__ == "__main__":
-    asyncio.run(run_all())
+    success = asyncio.run(run_all())
+    sys.exit(0 if success else 1)

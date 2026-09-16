@@ -5,6 +5,7 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_groq import ChatGroq
 from app.agent.state import TriageState
 from app.config import settings
+from app.agent.tools import check_red_flags
 
 # ── Shared LLM instance ───────────────────────────────────────
 llm = ChatGroq(
@@ -125,6 +126,29 @@ Do NOT diagnose or prescribe.
 
 # ── Node 3: Triage Decision ───────────────────────────────────
 async def triage_decision_node(state: TriageState) -> dict:
+        # Phase 1 Safety Override
+    red_flag = await check_red_flags(state)
+
+    if red_flag.get("emergency"):
+        advice = (
+            f"{red_flag['reason']}. "
+            "Seek emergency medical attention immediately or call your local "
+            "emergency number. This is AI guidance only and not a diagnosis."
+        )
+
+        return {
+            "messages": [
+                AIMessage(
+                    content="Triage Assessment — Emergency\n\n" + advice
+                )
+            ],
+            "urgency": "emergency",
+            "confidence": 100,
+            "advice": advice,
+            "symptoms_summary": red_flag["reason"],
+            "triage_complete": True,
+            "awaiting_user_input": False,
+        }
     system_prompt = SystemMessage(content=f"""
 You are an AI medical triage assistant making a triage assessment.
 Be compassionate, warm, and empathetic in your response.

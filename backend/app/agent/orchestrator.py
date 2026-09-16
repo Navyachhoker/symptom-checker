@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 llm = ChatGroq(
     api_key=settings.groq_api_key,
     model="openai/gpt-oss-120b",
-    temperature=0.1,
+    temperature=0.0,
     max_tokens=1024,
 )
 
@@ -494,6 +494,7 @@ async def orchestrator_node(state: TriageState) -> dict:
             "trace":               [trace],
             "needs_escalation":    False,
             "safety_approved":     True,
+            "safety_review_ran":   False,
         }
 
     # Step 3 — planning loop
@@ -503,12 +504,16 @@ async def orchestrator_node(state: TriageState) -> dict:
     while inner_step < max_inner_steps:
         action = await orchestrator_decide(state)
         result = await execute_action(action, state)
-        state  = {**state, **result}
 
-        # Merge lists properly
-        if "trace" in result:
-            existing = state.get("trace", [])
-            state["trace"] = existing
+        # Merge trace explicitly BEFORE spreading `result` over `state`.
+        # `{**state, **result}` overwrites state["trace"] with just this
+        # iteration's entries — grabbing "existing" afterward would only
+        # be re-reading that same overwritten value, which is a no-op.
+        # We build the combined list first, then apply it after the merge.
+        combined_trace = state.get("trace", []) + result.get("trace", [])
+
+        state = {**state, **result}
+        state["trace"] = combined_trace
 
         action_type = action.get("action", "conclude")
 
