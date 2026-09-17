@@ -69,6 +69,7 @@ class TriageOutcome(Base):
     confidence       = Column(Integer, nullable=True) 
     advice_text = Column(Text, nullable=False)
     symptoms_summary = Column(Text, nullable=True)    # brief summary of reported symptoms
+    specialist_called = Column(String(50), nullable=True)  # cardiac/respiratory/mental/pediatric/general
     created_at  = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     # Relationship

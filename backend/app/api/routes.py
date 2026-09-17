@@ -135,6 +135,7 @@ async def chat(
             confidence=result.get("confidence"),
             advice_text=result.get("advice", reply),
             symptoms_summary=result.get("symptoms_summary"),
+            specialist_called=result.get("specialist_called"),
         )
         db.add(outcome)
         await db.flush()
