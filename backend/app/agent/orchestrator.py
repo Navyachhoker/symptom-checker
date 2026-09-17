@@ -88,9 +88,13 @@ Respond ONLY with a JSON object — no prose, no explanation:
         age            = data.get("age")        or age
         existing_conds = data.get("existing_conditions", existing_conds) or existing_conds
     except Exception as exc:
+        # Deliberately not logging `raw` here — it is the model's attempt to
+        # structure the patient's actual symptoms/age/conditions, and this
+        # path can fire on ordinary malformed output. Length is still useful
+        # for spotting truncation vs. garbage output without leaking content.
         logger.warning(
-            "extract_symptoms: failed to parse LLM JSON output (%s). Raw response: %r",
-            exc, raw,
+            "extract_symptoms: failed to parse LLM JSON output (%s). Response length: %d chars",
+            exc, len(raw or ""),
         )
 
     return {
