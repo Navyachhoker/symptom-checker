@@ -137,6 +137,26 @@ async def orchestrator_decide(state: TriageState) -> dict:
     specialist_done = state.get("specialist_called") is not None
     tool_done     = "clinical_score" in state.get("tool_calls", [])
     questions_asked = state.get("questions_asked", 0)
+    # Hard rule (not just prompt guidance): cardiac and respiratory cases
+    # must get a specialist opinion before concluding, regardless of how
+    # confident the generic rule-based clinical scorer alone is. These
+    # domains carry a domain-specific differential (e.g. PE, asthma
+    # exacerbation, ACS) that a fixed point-based score has no concept
+    # of -- a tool-confidence shortcut is acceptable for general/pediatric
+    # cases, but not here. Gated on tool_done so this only intervenes at
+    # the point the LLM would otherwise be tempted to conclude early; it
+    # doesn't force specialist before the tool has even run once.
+    if tool_done and not specialist_done and has_symptoms:
+        identified_domain = identify_specialist(state)
+        if identified_domain in ("cardiac", "respiratory"):
+            return {
+                "action": "call_specialist",
+                "reasoning": f"{identified_domain} domain identified — specialist "
+                             f"consultation required before concluding, regardless "
+                             f"of tool-only confidence",
+                "specialist": identified_domain,
+            }
+
 
     system_prompt = SystemMessage(content=f"""
 You are an orchestrator for a medical triage AI system.

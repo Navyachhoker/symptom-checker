@@ -521,11 +521,25 @@ async def test_regression() -> list:
 # ASSUMPTION: specialist_called returns "cardiac" / "respiratory" / "general",
 # matching cardiac_specialist / respiratory_specialist / general_specialist in
 # specialists.py. VERIFY against actual return values before trusting results.
+# matching cardiac_specialist / respiratory_specialist / general_specialist in
+# specialists.py.
+
+# Case 1 previously used "chest pain radiating to left arm", which matches
+# check_red_flags' emergency bypass pattern and never reaches specialist
+# routing at all (confirmed via a live /api/chat call -- that input produces
+# specialist_called=None through the bypass path, not a routing failure).
+# Replaced with cardiac-domain symptom text that doesn't trip a red-flag
+# pattern, so this case actually exercises routing.
+#
+# orchestrator.py now enforces cardiac/respiratory specialist consultation
+# as a hard rule (not just LLM-discretion prompt guidance) before concluding,
+# regardless of tool-only confidence -- so expected_specialist for cases 1
+# and 2 should be reliable now, not merely an assumption.
 ROUTING_CASES = [
     {
         "id":       1,
         "label":    "Cardiac symptoms -> cardiac specialist",
-        "input":    "Crushing chest pain radiating to left arm. Severity 9/10. Age 55, hypertension.",
+        "input":    "Intermittent chest discomfort and palpitations on exertion for 2 weeks. Age 50, family history of heart disease.",
         "expected_specialist": "cardiac",
     },
     {
