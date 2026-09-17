@@ -26,6 +26,21 @@ Fixes vs. previous version:
   - Output trimmed to one line per result (quiet mode drops color/labels
     entirely) to cut console/token volume when this is piped into logs
     or read by another LLM.
+
+Fix in this revision:
+  - make_state() seeded step_count=3 (== orchestrator.py's MAX_STEPS) and
+    confidence=70, which made orchestrator_decide()'s hard exit fire
+    immediately for the "low" and "high" PIPELINE_CASES (they don't match
+    any hard-coded red-flag pattern), so those two categories were
+    measuring the short escalate+safety path (~2 LLM calls) instead of
+    the real production path (extract -> decide -> tool/specialist ->
+    conclude -> safety, ~5-6 LLM calls). Only "emergency" was measuring
+    something real, via the legitimate red-flag bypass. Fixed to
+    step_count=0/confidence=0/urgency=None/advice=None, matching a
+    genuine turn-1 call. NOTE: once this fix lands, expect avg/p90/p99
+    for "low" and "high" to rise substantially — THRESHOLDS below may
+    need recalibrating against real measured numbers rather than the
+    numbers the previous (short-circuited) version reported.
 """
 
 import os
@@ -82,11 +97,11 @@ def make_state(message: str) -> TriageState:
         "messages": [HumanMessage(content=message)],
         "symptoms": ["as described"], "duration": "as described",
         "severity": "as described", "age": "as described",
-        "existing_conditions": [], "step_count": 3, "confidence": 70,
+        "existing_conditions": [], "step_count": 0, "confidence": 0,
         "differential": [], "specialist_called": None, "tool_calls": [],
         "needs_escalation": False, "trace": [], "awaiting_user_input": False,
-        "triage_complete": False, "questions_asked": 2, "urgency": "moderate",
-        "safety_approved": False, "advice": "Test advice for safety review",
+        "triage_complete": False, "questions_asked": 2, "urgency": None,
+        "safety_approved": False, "advice": None,
         "symptoms_summary": None,
     }
 

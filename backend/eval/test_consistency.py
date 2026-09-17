@@ -31,6 +31,19 @@ CHANGES FROM v2:
      general_specialist in specialists.py). VERIFY this against your
      actual return values before trusting 4e's pass/fail.
 
+CHANGES IN THIS REVISION:
+  7. make_state() seeded step_count=3, which equals orchestrator.py's
+     MAX_STEPS. orchestrator_decide()'s very first check is
+     `if step >= MAX_STEPS and confidence < CONFIDENCE_THRESHOLD: escalate`,
+     so with confidence also starting at 0, every case that didn't hit a
+     hard-coded red-flag keyword immediately escalated (urgency defaults
+     to "moderate" in that branch) without ever running a specialist,
+     tool, or the real triage-generation prompt. This silently
+     invalidated most of 4a/4b/4c/4e (some emergency/regression cases
+     were accidentally saved by safety.py's independent hard-override
+     list). Fixed to step_count=0, matching the correct seed already
+     used in test_classification.py and test_llm_quality.py.
+
 Run from backend/ with venv active:
     python -m eval.test_consistency
 """
@@ -66,7 +79,7 @@ def make_state(message: str) -> TriageState:
         "severity":            "as described",
         "age":                 "as described",
         "existing_conditions": [],
-        "step_count":          3,
+        "step_count":          0,
         "confidence":          0,
         "differential":        [],
         "specialist_called":   None,
