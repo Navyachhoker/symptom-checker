@@ -11,6 +11,7 @@ from slowapi.errors import RateLimitExceeded
 from app.db.database import engine, Base
 from app.api.routes import router
 from app.core.logging_config import setup_logging, set_request_id
+from app.config import settings
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -20,9 +21,19 @@ limiter = Limiter(key_func=get_remote_address)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Database tables ready")
+    # Alembic (`alembic upgrade head`, run in the Docker CMD and in
+    # render.yaml's startCommand) is the single source of truth for
+    # schema in staging/production. create_all() is a convenience for
+    # local development only — running it in production would silently
+    # mask a broken/unapplied migration by creating tables from
+    # whatever the current models.py happens to say, rather than
+    # surfacing that Alembic didn't run.
+    if settings.app_env == "development":
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Database tables ready (development create_all)")
+    else:
+        logger.info("Skipping create_all in %s — schema is managed by Alembic", settings.app_env)
     yield
     await engine.dispose()
     logger.info("DB engine disposed")
@@ -39,7 +50,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
