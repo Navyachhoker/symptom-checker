@@ -59,9 +59,18 @@ async def safety_review(state: TriageState) -> dict:
     - Every return path also sets safety_review_ran = True. This is a
       deliberate, separate signal from safety_approved: safety_approved
       can also be set True by the orchestrator's emergency bypass path
-      (see orchestrator.py), which never calls this function at all —
-      so safety_approved alone can't tell you whether this node executed.
-      safety_review_ran is only ever set here.
+      (see orchestrator.py) *before* this function ever runs.
+      safety_review_ran is only ever set here, so it tells you whether
+      THIS pass actually executed.
+
+      Note: graph.py routes to safety_agent whenever triage_complete is
+      True, and the emergency bypass also sets triage_complete=True — so
+      this function DOES still run after a bypass, as a cheap second
+      confirmation (it will hit the matching hard_override below and
+      approve, since urgency is already "emergency" and can't be
+      upgraded further). It is not skipped, just redundant in that case;
+      the state's safety_review_ran value from the bypass branch gets
+      overwritten to True by this function's return before the turn ends.
     """
     original_urgency   = state.get("urgency") or "moderate"
     original_advice    = state.get("advice") or ""
