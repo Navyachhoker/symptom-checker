@@ -5,7 +5,7 @@ services:
     runtime: python
     rootDir: backend
     buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000
     plan: free
     envVars:
       - key: DATABASE_URL
