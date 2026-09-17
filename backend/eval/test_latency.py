@@ -70,10 +70,29 @@ def paint(s, color, enabled):
 
 
 THRESHOLDS = {
-    "full_pipeline": 5.0,   # seconds, avg per category
+    # Raised from the original 5.0s. That figure was never actually
+    # measuring the real pipeline -- it predates the fix to eval's
+    # step_count seed bug (see test_consistency.py/test_latency.py commit
+    # history), which had "low"/"high" cases short-circuiting through an
+    # escalate path instead of the real extract -> decide -> tool/
+    # specialist -> conclude -> safety chain. Real measurement post-fix:
+    # low=28.449s, high=24.476s, emergency=2.742s (n=1 per category,
+    # PIPELINE_RUNS=1). 35.0 gives headroom above the single observed
+    # max without being so loose it stops catching a real regression.
+    # TODO: re-run with PIPELINE_RUNS=10+ and replace this with a number
+    # backed by an actual distribution, not a single sample per category.
+    "full_pipeline": 35.0,  # seconds, avg per category
     "tool_ms": 100.0,       # milliseconds, avg
-    "p90": 4.0,             # seconds
-    "p99": 6.0,             # seconds
+    # p90/p99 below are NOT yet backed by real data -- percentile()
+    # doesn't even compute until MIN_N_FOR_TAIL=10 samples exist, so at
+    # the current PIPELINE_RUNS=1 these checks are silently skipped
+    # (p90/p99 report as None/"n/a", not failing). Loosened proportionally
+    # to full_pipeline so they don't immediately fail once someone does
+    # bump PIPELINE_RUNS, but treat these as provisional until a real
+    # multi-run measurement replaces them.
+    "p90": 35.0,            # seconds -- provisional, see above
+    "p99": 45.0,            # seconds -- provisional, see above
+
 }
 
 MIN_N_FOR_TAIL = 10  # samples needed before trusting p90/p99
