@@ -4,6 +4,7 @@ Each tool is a plain async function — the orchestrator decides
 whether to call them based on case state, not a fixed pipeline.
 """
 
+import re
 from app.agent.state import TriageState
 
 
@@ -57,6 +58,25 @@ async def calculate_clinical_score(state: TriageState) -> dict:
             score += 2
             reasons.append(f"High-risk condition: {c}")
             break
+
+    duration = state.get("duration")
+    if duration:
+        try:
+            dur_text = str(duration).lower()
+            match = re.search(r"(\d+)\s*(day|days|week|weeks)", dur_text)
+            if match:
+                num  = int(match.group(1))
+                unit = match.group(2)
+                days = num * 7 if unit.startswith("week") else num
+                # >=3 days is past the typical self-limiting-viral-illness
+                # window (most colds/mild fevers improve within 48-72h),
+                # so persistence beyond that is a genuine (if modest)
+                # triage signal on its own, independent of severity.
+                if days >= 3:
+                    score += 1
+                    reasons.append(f"Persistent symptoms ({duration})")
+        except (ValueError, AttributeError):
+            pass
 
     symptoms = [s.lower() for s in state.get("symptoms", [])]
     red_flag_symptoms = {

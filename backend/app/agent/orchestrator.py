@@ -26,6 +26,7 @@ from app.agent.tools import (
     escalate_to_human,
 )
 from app.agent.specialists import call_specialist
+from app.agent.safety import higher_urgency
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -235,10 +236,25 @@ async def execute_action(action: dict, state: TriageState) -> dict:
             "confidence": specialist_result.get("confidence", 0),
         }
 
+        # A specialist assesses one domain and can legitimately be less
+        # alarmed than an earlier tool result (e.g. a respiratory specialist
+        # correctly finding no respiratory red flags on a case a general
+        # clinical-score tool flagged as moderate for other reasons). That
+        # narrower view should be able to raise the estimate, but must not
+        # silently erase a broader/systemic finding already in state --
+        # same upgrade-only principle safety.py applies at the final pass,
+        # just applied one step earlier so it isn't lost before then.
+        specialist_urgency = specialist_result.get("urgency")
+        existing_urgency    = state.get("urgency")
+        if specialist_urgency and existing_urgency:
+            final_urgency = higher_urgency(specialist_urgency, existing_urgency)
+        else:
+            final_urgency = specialist_urgency or existing_urgency
+
         return {
             "specialist_called": specialist_name,
             "confidence":        specialist_result.get("confidence", state.get("confidence", 0)),
-            "urgency":           specialist_result.get("urgency"),
+            "urgency":           final_urgency,
             "step_count":        step + 1,
             "trace":             [trace] + specialist_result.get("trace", []),
             "awaiting_user_input": False,
@@ -286,13 +302,23 @@ async def execute_action(action: dict, state: TriageState) -> dict:
             "confidence": new_confidence,
         }
 
-        return {
+        update = {
             "tool_calls":  tool_calls,
             "confidence":  new_confidence,
             "step_count":  step + 1,
             "trace":       [trace],
             "awaiting_user_input": False,
         }
+        # Surface the clinical scorer's band so generate_final_triage's
+        # prompt shows an actual estimate instead of "not yet determined" --
+        # without this, the tool's finding was computed but never visible
+        # to the step that decides final urgency. Still advisory, not a
+        # hard floor: the final LLM can and does override it, same as it
+        # can override a specialist's assessment.
+        if tool_name == "clinical_score" and not state.get("urgency"):
+            update["urgency"] = tool_result.get("band")
+
+        return update
 
     # ── Escalate to human ─────────────────────────────────────
     elif action_type == "escalate":
