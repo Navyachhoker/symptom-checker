@@ -13,6 +13,7 @@ and in a medical context a missed emergency is the worst failure mode.
 """
 
 import re
+import time
 import logging
 from langchain_core.messages import SystemMessage
 from langchain_groq import ChatGroq
@@ -129,6 +130,7 @@ async def safety_review(state: TriageState) -> dict:
                     "reasoning":  override_reason,
                     "output":     f"Upgraded {original_urgency} → emergency (hard override)",
                     "confidence": 99,
+                    "duration_ms": 0.0,
                 }
 
                 upgraded_advice = (
@@ -159,6 +161,7 @@ async def safety_review(state: TriageState) -> dict:
                     "reasoning":  "Emergency urgency confirmed by safety pattern match",
                     "output":     "Approved — emergency classification correct",
                     "confidence": 99,
+                    "duration_ms": 0.0,
                 }
                 return {
                     "safety_approved": True,
@@ -205,7 +208,9 @@ FLAG:
 """)
 
     logger.info("safety_agent: no hard override matched, deferring to LLM review")
+    safety_start = time.perf_counter()
     response = await llm.ainvoke([system_prompt])
+    safety_ms = round((time.perf_counter() - safety_start) * 1000, 1)
     raw      = response.content
 
     decision_match  = re.search(r"DECISION:\s*(\w+)", raw, re.IGNORECASE)
@@ -229,6 +234,7 @@ FLAG:
             "reasoning":  reasoning or "Original triage decision approved",
             "output":     f"Approved {original_urgency} urgency classification",
             "confidence": original_confidence,
+            "duration_ms": safety_ms,
         }
         logger.info("safety_agent: APPROVE — %s urgency confirmed", original_urgency)
         return {
@@ -260,6 +266,7 @@ FLAG:
             "reasoning":  reasoning,
             "output":     f"Upgraded {original_urgency} → {final_urgency}. Flag: {flag}",
             "confidence": original_confidence,
+            "duration_ms": safety_ms,
         }
 
         logger.warning(
@@ -284,6 +291,7 @@ FLAG:
             "reasoning":  f"Upgrade requested to {upgraded} but original {original_urgency} is already higher",
             "output":     f"Approved {original_urgency} — no change needed",
             "confidence": original_confidence,
+            "duration_ms": safety_ms,
         }
         return {
             "safety_approved": True,

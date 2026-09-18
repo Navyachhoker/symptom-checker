@@ -26,21 +26,6 @@ Fixes vs. previous version:
   - Output trimmed to one line per result (quiet mode drops color/labels
     entirely) to cut console/token volume when this is piped into logs
     or read by another LLM.
-
-Fix in this revision:
-  - make_state() seeded step_count=3 (== orchestrator.py's MAX_STEPS) and
-    confidence=70, which made orchestrator_decide()'s hard exit fire
-    immediately for the "low" and "high" PIPELINE_CASES (they don't match
-    any hard-coded red-flag pattern), so those two categories were
-    measuring the short escalate+safety path (~2 LLM calls) instead of
-    the real production path (extract -> decide -> tool/specialist ->
-    conclude -> safety, ~5-6 LLM calls). Only "emergency" was measuring
-    something real, via the legitimate red-flag bypass. Fixed to
-    step_count=0/confidence=0/urgency=None/advice=None, matching a
-    genuine turn-1 call. NOTE: once this fix lands, expect avg/p90/p99
-    for "low" and "high" to rise substantially — THRESHOLDS below may
-    need recalibrating against real measured numbers rather than the
-    numbers the previous (short-circuited) version reported.
 """
 
 import os
@@ -92,7 +77,6 @@ THRESHOLDS = {
     # multi-run measurement replaces them.
     "p90": 35.0,            # seconds -- provisional, see above
     "p99": 45.0,            # seconds -- provisional, see above
-
 }
 
 MIN_N_FOR_TAIL = 10  # samples needed before trusting p90/p99
@@ -178,14 +162,15 @@ def percentiles(times: list):
 
 def extract_node_timings(trace: list) -> dict:
     """
-    Best-effort extraction of per-node timing from state["trace"].
+    Extracts per-node timing from state["trace"].
 
-    KNOWN LIMITATION: the real AgentTrace schema (see app/agent/state.py)
-    is {step, agent, action, reasoning, output, confidence} — it has no
-    duration/elapsed field, and nothing in orchestrator.py or safety.py
-    currently records per-node timing into the trace. This function will
-    therefore always return an empty dict until timing instrumentation
-    is added upstream (tracked separately — not a Phase 1 change).
+    orchestrator.py, safety.py, and specialists.py now populate
+    duration_ms on their trace entries (extract_symptoms, each
+    orchestrator_decide+execute_action iteration via decide_ms/
+    execute_ms, each specialist call, and the safety review). This
+    gives a real per-node latency breakdown instead of a single
+    end-to-end number, which is what actually identifies where an
+    optimization would help.
     """
     node_times = {}
     if not trace:
@@ -194,7 +179,7 @@ def extract_node_timings(trace: list) -> dict:
         if not isinstance(entry, dict):
             continue
         node = entry.get("agent")
-        duration = entry.get("duration") or entry.get("duration_ms") or entry.get("elapsed")
+        duration = entry.get("duration_ms")
         if node and duration is not None:
             node_times.setdefault(node, []).append(duration)
     return node_times
@@ -210,10 +195,19 @@ async def check_pipeline_latency(quiet: bool) -> dict:
         await run_pipeline_once(case["input"])  # warm-up, discarded
 
         times, errors = [], 0
+        # agent name -> list of PER-RUN summed duration_ms (one entry per
+        # run, not one entry per trace line -- a node like "orchestrator"
+        # can appear multiple times within a single run via extract_symptoms
+        # plus each loop iteration, so summing within the run first is what
+        # makes these percentages reconcile against the measured total).
+        node_totals_per_run = {}
         for _ in range(PIPELINE_RUNS):
             r = await run_pipeline_once(case["input"])
             if r["ok"]:
                 times.append(r["elapsed"])
+                run_node_times = extract_node_timings(r["result"].get("trace", []))
+                for node, durations in run_node_times.items():
+                    node_totals_per_run.setdefault(node, []).append(sum(durations))
             else:
                 errors += 1
 
@@ -230,14 +224,22 @@ async def check_pipeline_latency(quiet: bool) -> dict:
         if p90 is not None:
             passed = passed and p90 <= THRESHOLDS["p90"] and p99 <= THRESHOLDS["p99"]
 
+        node_avg_ms = {n: round(statistics.mean(totals), 1) for n, totals in node_totals_per_run.items()}
         results.append({"label": case["label"], "avg": avg, "min": mn, "max": mx,
-                         "p90": p90, "p99": p99, "errors": errors, "passed": passed})
+                         "p90": p90, "p99": p99, "errors": errors, "passed": passed,
+                         "node_breakdown_ms": node_avg_ms})
 
         if not quiet:
             status = paint("OK", "g", True) if passed else paint("FAIL", "r", True)
             tail = f" p90={p90:.3f}s p99={p99:.3f}s" if p90 is not None else " p90/p99=n/a(<10 samples)"
             err = f" errors={errors}" if errors else ""
             print(f"  {case['label']:<10} avg={avg:.3f}s min={mn:.3f}s max={mx:.3f}s{tail}{err} {status}")
+            if node_avg_ms:
+                total_ms = avg * 1000
+                for node, node_ms in sorted(node_avg_ms.items(), key=lambda kv: -kv[1]):
+                    pct = round(100 * node_ms / total_ms) if total_ms else 0
+                    n_runs = len(node_totals_per_run[node])
+                    print(f"      {node:<24} {node_ms:>8.1f}ms avg/run  ({pct}% of total, n={n_runs} run(s))")
 
     return {"results": results}
 

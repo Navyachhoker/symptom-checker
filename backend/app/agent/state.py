@@ -11,6 +11,7 @@ class AgentTrace(TypedDict):
     reasoning:   str        # why this action was taken
     output:      str        # what was produced
     confidence:  Optional[int]
+    duration_ms: Optional[float]  # wall-clock time this step took, for latency diagnostics
 
 
 class TriageState(TypedDict):

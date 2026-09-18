@@ -15,6 +15,7 @@ than a fixed pipeline with different prompts.
 
 import re
 import json
+import time
 import logging
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain_groq import ChatGroq
@@ -71,7 +72,9 @@ Respond ONLY with a JSON object — no prose, no explanation:
 }
 """)
 
+    extract_start = time.perf_counter()
     response = await llm.ainvoke([system_prompt] + state["messages"])
+    extract_ms = round((time.perf_counter() - extract_start) * 1000, 1)
     raw = response.content
 
     symptoms       = state.get("symptoms", [])
@@ -104,60 +107,26 @@ Respond ONLY with a JSON object — no prose, no explanation:
         "severity":            severity,
         "age":                 age,
         "existing_conditions": existing_conds,
+        "trace": [{
+            "step":        state.get("step_count", 0),
+            "agent":       "orchestrator",
+            "action":      "extract_symptoms",
+            "reasoning":   "Parsed structured clinical fields from the latest message",
+            "output":      f"{len(symptoms)} symptom(s) extracted",
+            "confidence":  None,
+            "duration_ms": extract_ms,
+        }],
     }
 
 
-# ── Step 2: Orchestrator decides next action ──────────────────
-async def orchestrator_decide(state: TriageState) -> dict:
+async def _decide_via_llm(state: TriageState, step: int, confidence: int, questions_asked: int) -> dict:
     """
-    The planning brain. Looks at current case state and decides
-    what to do next. Returns an action dict the loop executes.
-
-    Possible actions:
-      - ask_question: need more info from the user
-      - call_specialist: invoke a domain specialist
-      - run_tool: run clinical scorer or red flag checker
-      - conclude: enough confidence to give final triage
-      - escalate: confidence too low after too many steps
+    The original LLM-based planning decision. Now only called for the
+    ask_question case (deciding WHETHER to ask is deterministic -- see
+    orchestrator_decide below -- but the question's WORDING genuinely
+    benefits from model judgment) and as a safety-net fallback for any
+    state combination the deterministic rules below don't anticipate.
     """
-    step      = state.get("step_count", 0)
-    confidence = state.get("confidence", 0)
-
-    # Hard exits
-    if step >= MAX_STEPS and confidence < CONFIDENCE_THRESHOLD:
-        return {"action": "escalate", "reasoning": f"Max steps ({MAX_STEPS}) reached with confidence {confidence}%"}
-
-    if state.get("triage_complete"):
-        return {"action": "conclude", "reasoning": "Triage already complete"}
-
-    # Check what we have
-    has_symptoms  = len(state.get("symptoms", [])) > 0
-    has_severity  = state.get("severity") is not None
-    has_duration  = state.get("duration") is not None
-    specialist_done = state.get("specialist_called") is not None
-    tool_done     = "clinical_score" in state.get("tool_calls", [])
-    questions_asked = state.get("questions_asked", 0)
-    # Hard rule (not just prompt guidance): cardiac and respiratory cases
-    # must get a specialist opinion before concluding, regardless of how
-    # confident the generic rule-based clinical scorer alone is. These
-    # domains carry a domain-specific differential (e.g. PE, asthma
-    # exacerbation, ACS) that a fixed point-based score has no concept
-    # of -- a tool-confidence shortcut is acceptable for general/pediatric
-    # cases, but not here. Gated on tool_done so this only intervenes at
-    # the point the LLM would otherwise be tempted to conclude early; it
-    # doesn't force specialist before the tool has even run once.
-    if tool_done and not specialist_done and has_symptoms:
-        identified_domain = identify_specialist(state)
-        if identified_domain in ("cardiac", "respiratory"):
-            return {
-                "action": "call_specialist",
-                "reasoning": f"{identified_domain} domain identified — specialist "
-                             f"consultation required before concluding, regardless "
-                             f"of tool-only confidence",
-                "specialist": identified_domain,
-            }
-
-
     system_prompt = SystemMessage(content=f"""
 You are an orchestrator for a medical triage AI system.
 Your job is to decide what to do next given the current case state.
@@ -192,12 +161,15 @@ Respond with ONLY a JSON object:
 }}
 """)
 
+    decide_start = time.perf_counter()
     response = await llm.ainvoke([system_prompt])
+    decide_ms = round((time.perf_counter() - decide_start) * 1000, 1)
     raw = response.content
 
     try:
         clean  = re.sub(r"```json|```", "", raw).strip()
         action = json.loads(clean)
+        action["_decide_ms"] = decide_ms
         return action
     except Exception as exc:
         # Fallback — if parse fails, conclude to avoid infinite loop
@@ -208,7 +180,122 @@ Respond with ONLY a JSON object:
         return {
             "action":    "conclude",
             "reasoning": "Could not parse orchestrator decision — defaulting to conclude",
+            "_decide_ms": decide_ms,
         }
+
+
+# ── Step 2: Orchestrator decides next action ──────────────────
+async def orchestrator_decide(state: TriageState) -> dict:
+    """
+    The planning brain. Looks at current case state and decides
+    what to do next. Returns an action dict the loop executes.
+
+    Possible actions:
+      - ask_question: need more info from the user
+      - call_specialist: invoke a domain specialist
+      - run_tool: run clinical scorer or red flag checker
+      - conclude: enough confidence to give final triage
+      - escalate: confidence too low after too many steps
+
+    Deterministic-first (Phase 2 latency optimization): rules 2-4 below
+    are plain boolean logic -- they don't need an LLM round-trip to
+    re-derive an answer the code already has. Measured impact: before
+    this change, orchestrator_decide's repeated LLM calls accounted for
+    ~84-85% of end-to-end latency on non-bypass paths (test_latency.py
+    node breakdown, 2026-09-17). Only the ask_question branch still
+    calls the LLM (see _decide_via_llm) -- deciding WHETHER to ask is
+    deterministic, but the question's WORDING isn't.
+    """
+    step      = state.get("step_count", 0)
+    confidence = state.get("confidence", 0)
+
+    # Hard exits
+    if step >= MAX_STEPS and confidence < CONFIDENCE_THRESHOLD:
+        return {"action": "escalate", "reasoning": f"Max steps ({MAX_STEPS}) reached with confidence {confidence}%"}
+
+    if state.get("triage_complete"):
+        return {"action": "conclude", "reasoning": "Triage already complete"}
+
+    # Check what we have
+    has_symptoms  = len(state.get("symptoms", [])) > 0
+    has_severity  = state.get("severity") is not None
+    has_duration  = state.get("duration") is not None
+    specialist_done = state.get("specialist_called") is not None
+    tool_done     = "clinical_score" in state.get("tool_calls", [])
+    questions_asked = state.get("questions_asked", 0)
+
+    # Hard rule (not just prompt guidance): cardiac and respiratory cases
+    # must get a specialist opinion before concluding, regardless of how
+    # confident the generic rule-based clinical scorer alone is. These
+    # domains carry a domain-specific differential (e.g. PE, asthma
+    # exacerbation, ACS) that a fixed point-based score has no concept
+    # of -- a tool-confidence shortcut is acceptable for general/pediatric
+    # cases, but not here. Gated on tool_done so this only intervenes at
+    # the point the LLM would otherwise be tempted to conclude early; it
+    # doesn't force specialist before the tool has even run once.
+    if tool_done and not specialist_done and has_symptoms:
+        identified_domain = identify_specialist(state)
+        if identified_domain in ("cardiac", "respiratory"):
+            return {
+                "action": "call_specialist",
+                "reasoning": f"{identified_domain} domain identified — specialist "
+                             f"consultation required before concluding, regardless "
+                             f"of tool-only confidence",
+                "specialist": identified_domain,
+                "_decide_ms": 0.0,
+            }
+
+    # ── Rule 1: missing symptoms, still allowed to ask ─────────
+    # Deferred to the LLM: WHETHER to ask is deterministic (the condition
+    # right here), but a good clarifying question needs actual judgment
+    # about what's missing and how to phrase it -- a canned string would
+    # feel robotic and blind to the specific case.
+    if not has_symptoms and questions_asked < 2:
+        return await _decide_via_llm(state, step, confidence, questions_asked)
+
+    # ── Rule 2: symptoms present, clinical score not yet run ───
+    if not tool_done:
+        return {
+            "action": "run_tool",
+            "reasoning": "Deterministic rule: symptoms present but no clinical "
+                         "score computed yet",
+            "tool": "clinical_score",
+            "_decide_ms": 0.0,
+        }
+
+    # ── Rule 4: confident enough, or specialist already weighed in ──
+    # (checked before rule 3 deliberately, same precedence as the
+    # original prompt: "confidence >= threshold OR specialist done")
+    if confidence >= CONFIDENCE_THRESHOLD or specialist_done:
+        why = []
+        if confidence >= CONFIDENCE_THRESHOLD:
+            why.append(f"confidence {confidence}% meets the {CONFIDENCE_THRESHOLD}% threshold")
+        if specialist_done:
+            why.append("a specialist has already been consulted")
+        return {
+            "action": "conclude",
+            "reasoning": "Deterministic rule: " + " and ".join(why),
+            "_decide_ms": 0.0,
+        }
+
+    # ── Rule 3: under-confident, no specialist yet ──────────────
+    if not specialist_done:
+        identified_domain = identify_specialist(state)
+        return {
+            "action": "call_specialist",
+            "reasoning": f"Deterministic rule: confidence {confidence}% is below "
+                         f"the {CONFIDENCE_THRESHOLD}% threshold and no specialist "
+                         f"has been consulted yet",
+            "specialist": identified_domain,
+            "_decide_ms": 0.0,
+        }
+
+    # Safety-net fallback -- the rules above are exhaustive over
+    # (has_symptoms, tool_done, confidence, specialist_done), so this
+    # shouldn't normally be reached. Falling through to the original
+    # LLM-based decision is safer than guessing at an unanticipated
+    # state combination.
+    return await _decide_via_llm(state, step, confidence, questions_asked)
 
 
 # ── Step 3: Execute the chosen action ────────────────────────
@@ -541,7 +628,7 @@ async def orchestrator_node(state: TriageState) -> dict:
             "triage_complete":     True,
             "awaiting_user_input": False,
             "tool_calls":          state.get("tool_calls", []) + ["red_flag_check"],
-            "trace":               [trace],
+            "trace":               state.get("trace", []) + [trace],
             "needs_escalation":    False,
             "safety_approved":     True,
             "safety_review_ran":   False,
@@ -553,14 +640,31 @@ async def orchestrator_node(state: TriageState) -> dict:
 
     while inner_step < max_inner_steps:
         action = await orchestrator_decide(state)
+        decide_ms = action.pop("_decide_ms", 0.0)
+
+        execute_start = time.perf_counter()
         result = await execute_action(action, state)
+        execute_ms = round((time.perf_counter() - execute_start) * 1000, 1)
+
+        # Attach timing to every trace entry produced this iteration.
+        # Usually there's exactly one (ask_question/run_tool/escalate/
+        # conclude) or two (call_specialist: the orchestrator's own entry
+        # plus the specialist's own entry from specialists.py, which times
+        # itself separately and already has its own duration_ms -- don't
+        # overwrite that one).
+        result_trace = result.get("trace", [])
+        for entry in result_trace:
+            if entry.get("agent") == "orchestrator" and entry.get("duration_ms") is None:
+                entry["decide_ms"]  = decide_ms
+                entry["execute_ms"] = execute_ms
+                entry["duration_ms"] = round(decide_ms + execute_ms, 1)
 
         # Merge trace explicitly BEFORE spreading `result` over `state`.
         # `{**state, **result}` overwrites state["trace"] with just this
         # iteration's entries — grabbing "existing" afterward would only
         # be re-reading that same overwritten value, which is a no-op.
         # We build the combined list first, then apply it after the merge.
-        combined_trace = state.get("trace", []) + result.get("trace", [])
+        combined_trace = state.get("trace", []) + result_trace
 
         state = {**state, **result}
         state["trace"] = combined_trace
