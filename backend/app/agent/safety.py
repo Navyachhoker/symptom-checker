@@ -15,7 +15,7 @@ and in a medical context a missed emergency is the worst failure mode.
 import re
 import time
 import logging
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, AIMessage
 from langchain_groq import ChatGroq
 from app.agent.state import TriageState, AgentTrace
 from app.config import settings
@@ -31,6 +31,13 @@ llm = ChatGroq(
 
 # Urgency levels in order — used to enforce upgrades only, never downgrades
 URGENCY_ORDER = ["low", "moderate", "high", "emergency"]
+
+URGENCY_LABELS = {
+    "low":       "Low urgency",
+    "moderate":  "Moderate urgency",
+    "high":      "High urgency",
+    "emergency": "Emergency",
+}
 
 
 def urgency_index(level) -> int:
@@ -72,6 +79,13 @@ async def safety_review(state: TriageState) -> dict:
       upgraded further). It is not skipped, just redundant in that case;
       the state's safety_review_ran value from the bypass branch gets
       overwritten to True by this function's return before the turn ends.
+    - When an upgrade actually changes the urgency, a corrected AIMessage
+      is appended (state["messages"] uses operator.add, so this becomes
+      the new last message). Without this, the chat-facing reply text
+      stayed frozen at whatever generate_final_triage wrote *before*
+      this review ran, while the separate triage_outcome object (built
+      from the final post-review state) could show a different, upgraded
+      urgency — the two would visibly disagree in the same response.
     """
     original_urgency   = state.get("urgency") or "moderate"
     original_advice    = state.get("advice") or ""
@@ -144,7 +158,11 @@ async def safety_review(state: TriageState) -> dict:
                     "safety_agent: hard override %s -> emergency (%s)",
                     original_urgency, override_reason,
                 )
+                corrected_message = (
+                    f"Triage Assessment — {URGENCY_LABELS['emergency']}\n\n{upgraded_advice}"
+                )
                 return {
+                    "messages":       [AIMessage(content=corrected_message)],
                     "urgency":        "emergency",
                     "confidence":     99,
                     "advice":         upgraded_advice,
@@ -273,7 +291,11 @@ FLAG:
             "safety_agent: UPGRADE %s -> %s (%s)",
             original_urgency, final_urgency, reasoning,
         )
+        corrected_message = (
+            f"Triage Assessment — {URGENCY_LABELS.get(final_urgency, 'Moderate urgency')}\n\n{upgraded_advice}"
+        )
         return {
+            "messages":        [AIMessage(content=corrected_message)],
             "urgency":         final_urgency,
             "advice":          upgraded_advice,
             "safety_approved": True,
