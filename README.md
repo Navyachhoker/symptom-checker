@@ -1,315 +1,282 @@
 # AI Medical Triage Agent
 
-### LangGraph · FastAPI · PostgreSQL · Groq LLM
+### Multi-agent LangGraph · FastAPI · PostgreSQL · Groq · React
 
-> A conversational AI agent that triages patient symptoms through multi-turn dialogue, built with LangGraph, FastAPI, and PostgreSQL.
+A conversational triage assistant. A user describes their symptoms; a LangGraph workflow extracts structured clinical details, runs rule-based safety checks and a clinical scorer, optionally consults a domain specialist, and returns an urgency level (`low`, `moderate`, `high`, `emergency`) with next-step advice. A separate safety agent reviews every decision and can only **raise** urgency, never lower it.
 
----
+**Live demo:** https://medtriage-frontend.onrender.com/ (Render free tier, so the first request after idle can take 30–50 seconds)
 
-##  Overview
-
-This project implements a lightweight medical triage assistant that engages users in a structured conversation to assess symptom severity and recommend appropriate next steps. The agent intelligently decides when it has gathered enough context to issue a triage decision — and when it needs to ask one more targeted question first.
-
-**Key design principle:** The agent asks a single clarification per interaction and then reassesses whether enough information has been gathered to make a triage recommendation.
+> **Disclaimer:** Educational and demonstration project only. It is not a medical device and not a substitute for professional medical advice, diagnosis, or treatment. If you think you are having an emergency, call your local emergency number.
 
 ---
 
-##  Highlights
+## Highlights
 
-- Built a stateful AI agent using LangGraph
-- Designed a multi-turn symptom assessment workflow
-- Integrated Groq-hosted LLMs for real-time reasoning
-- Implemented conditional routing and graph cycles
-- Persisted conversations using PostgreSQL and SQLAlchemy
-- Exposed functionality through FastAPI REST endpoints
-
----
-
-## Disclaimer
-
-This project is intended for educational and demonstration purposes only.
-It is not a substitute for professional medical advice, diagnosis, or treatment.
-Always consult a qualified healthcare professional for medical concerns.
+- **Orchestrator + specialists + safety reviewer** built on LangGraph with typed shared state.
+- **Rule-based safety first:** a keyword red-flag check can bypass the LLM entirely and return an emergency response; a deterministic clinical scorer anchors the urgency estimate.
+- **Upgrade-only safety layer:** hard-coded emergency overrides, then an LLM review; urgency can only move up.
+- **Five specialist prompts:** cardiac, respiratory, mental health, pediatric, general. Cardiac and respiratory consultation is enforced in code before concluding.
+- **Deterministic-first orchestration:** routing decisions are plain Python; the LLM is used for extraction, question wording, specialist assessment, final advice and safety review. Profiling showed LLM routing calls were ~85% of latency; replacing them cut high-urgency latency from ~30 s to ~4 s in development measurements.
+- **Stateless API:** conversation history is rebuilt from PostgreSQL on every request.
+- **Observability:** per-request ID in every log line, per-step timing, and a full agent reasoning trace returned to the UI.
+- **Evaluation suite** with a single-agent baseline, classification, response-quality (rules + LLM-as-judge), consistency and latency scripts.
 
 ---
 
-##  How It Works
+## How It Works
 
 ```
-1. User submits symptoms via POST /chat
-2. LangGraph agent enters the assess_node
-   ├── Not enough info? → Returns ONE follow-up question (stage: "assess")
-   └── Enough info?    → Routes to recommend_node
-3. recommend_node generates urgency level + actionable advice (stage: "done")
-4. Full conversation (messages + outcome) is persisted to PostgreSQL
+POST /api/chat
+   │
+   ▼
+Validate + rate limit → load session & history from PostgreSQL
+   │
+   ▼
+┌──────────────────────── orchestrator node ────────────────────────┐
+│ 1. extract_symptoms     LLM → symptoms, duration, severity, age,   │
+│                         existing conditions                        │
+│ 2. check_red_flags      RULES → emergency bypass (skips the LLM)   │
+│ 3. planning loop (≤ 3 steps):                                      │
+│      ask_question  │ run clinical scorer │ call specialist │       │
+│      conclude      │ escalate                                      │
+└──────────────┬───────────────────────────────────────────┬─────────┘
+               │ awaiting user input                       │ triage complete
+               ▼                                           ▼
+              END                                   safety agent
+                                         hard overrides → LLM review
+                                         (upgrade-only)   │
+                                                          ▼
+                                                         END
+   │
+   ▼
+Save assistant reply + triage outcome → return reply, outcome, agent trace
 ```
 
-**Urgency levels returned:** `LOW` · `MEDIUM` · `HIGH`
+**Typical paths**
+
+| Path | LLM calls | Notes |
+|---|---|---|
+| Emergency red-flag bypass | 1–2 | Extraction, then (usually) a safety review |
+| High / emergency scorer band | 3 | Extraction, final triage, safety review |
+| Low / moderate band, or cardiac / respiratory | 4 | Adds one specialist consultation |
+
+**Decision rules (in order)**
+
+1. Max steps reached with confidence below 75 → escalate.
+2. Cardiac or respiratory domain, scorer already run, no specialist yet → call that specialist.
+3. No symptoms extracted and fewer than 2 questions asked → LLM phrases a clarifying question.
+4. Scorer not yet run → run the clinical scorer.
+5. Confidence ≥ 75, or a specialist has weighed in → conclude.
+6. Otherwise → call a specialist.
 
 ---
 
-##  Architecture
+## Tech Stack
 
-```
-User
-  │
-  ▼
-POST /chat  (FastAPI + Uvicorn)
-  │
-  ▼
-┌─────────────────────────────┐
-│        assess_node          │  ← LangGraph node
-│                             │
-│  Enough info?               │
-│  ├── NO  → FOLLOWUP (ask)  │
-│  └── YES → READY (proceed) │
-└──────────────┬──────────────┘
-               │ READY
-               ▼
-┌─────────────────────────────┐
-│       recommend_node        │  ← LangGraph node
-│  Urgency level + advice     │
-└──────────────┬──────────────┘
-               │
-               ▼
-         PostgreSQL
-  (sessions · messages · triage_outcomes)
-```
+| Layer | Technology |
+|---|---|
+| Agent orchestration | LangGraph, LangChain (`langchain-groq`) |
+| LLM | Groq-hosted `openai/gpt-oss-120b` (temperature 0.0 for orchestrator and safety, 0.1 for specialists) |
+| API | FastAPI, Uvicorn, Pydantic v2, slowapi (rate limiting) |
+| Database | PostgreSQL, SQLAlchemy 2.0 (async), asyncpg, Alembic |
+| Frontend | React 18, Vite, axios |
+| Deployment | Render (`render.yaml` blueprint), Dockerfiles for backend and frontend |
+| Language | Python 3.11, JavaScript |
 
 ---
 
-##  LangGraph Concepts Demonstrated
-
-This project showcases several core LangGraph concepts:
-
-- Stateful workflow management
-- Conditional routing between nodes
-- Multi-turn conversational memory
-- Cyclic graph execution for follow-up questions
-- LLM-powered decision making
-- Structured state propagation across nodes
-
----
-## Known Limitations
-
-This section documents the current limitations of the system honestly.
-Understanding the boundaries of an AI system is as important as understanding its capabilities.
-
-### Clinical reliability
-
-The triage classifications produced by this system have not been validated
-against clinical guidelines or reviewed by medical professionals. The underlying
-language model (Llama 3.3 70B via Groq) can produce plausible-sounding but
-incorrect urgency assessments, particularly for edge cases, rare conditions,
-or symptoms that require physical examination to evaluate.
-
-The evaluation suite scores 100% on 10 fixed scenarios, but this measures
-consistency against pre-defined expected outputs — not clinical accuracy.
-A score of 100% on the eval suite does not mean the system is safe for
-real medical use.
-
-### Hallucination risk
-
-Large language models can hallucinate. The triage decision node may:
-- Assign an incorrect urgency level with high stated confidence
-- Generate advice that sounds authoritative but is clinically wrong
-- Miss critical symptoms that were mentioned but not weighted correctly
-- Produce different urgency classifications for the same symptoms across runs
-  (mitigated by setting temperature to 0.1, but not eliminated)
-
-### No memory across sessions
-
-Each session is independent. The system has no knowledge of a user's
-medical history from previous sessions. A user who disclosed a heart
-condition in one session will need to mention it again in a new session.
-
-### No authentication beyond token scoping
-
-The current auth implementation uses a UUID token stored in localStorage.
-This is not cryptographically secured authentication. The token can be
-copied between browsers, lost on browser data clear, or accessed by
-other scripts running on the same origin. It provides session isolation
-for demonstration purposes only — not production-grade user authentication.
-
-### Single point of failure on Groq
-
-The system has no fallback LLM provider. If the Groq API is unavailable,
-all triage functionality fails. There is no retry logic, circuit breaker,
-or degraded-mode response. For production use, a fallback provider
-(e.g. OpenAI or Anthropic) should be configured.
-
-### Free tier constraints
-
-Both the backend and the PostgreSQL database are hosted on Render's free tier.
-The backend service spins down after 15 minutes of inactivity, causing the
-first request after idle to take 30-50 seconds. The free PostgreSQL instance
-has a 1GB storage limit and will be deleted after 90 days of inactivity
-on Render's free plan.
-
-### What would be required for production use
-
-- Clinical validation of triage outputs against established triage protocols
-  such as the Manchester Triage System or ESI
-- Review and sign-off by licensed medical professionals
-- Robust authentication with server-side session management
-- Fallback LLM provider with retry logic and circuit breaking
-- Monitoring and alerting on triage outcome distributions
-- A feedback mechanism for users to flag incorrect assessments
-- Compliance review for any jurisdiction where medical software is regulated
-  (e.g. CDSCO in India, FDA in the US, CE marking in Europe)
-
-##  Project Structure
+## Project Structure
 
 ```
 symptom-checker/
-│
-├── main.py                   # FastAPI entry point & app initialization
-│
-├── .env                      # Environment secrets (excluded from version control)
-│
-├── agent/
-│   ├── state.py              # LangGraph shared state definition
-│   ├── nodes.py              # assess_node and recommend_node logic
-│   └── graph.py              # StateGraph assembly and compilation
-│
-├── routes/
-│   ├── chat.py               # POST /chat  — submit a symptom message
-│   └── history.py            # GET  /history/{session_id} — retrieve session log
-│
-├── db/
-│   ├── database.py           # SQLAlchemy engine & session factory
-│   ├── models.py             # ORM table definitions
-│   └── crud.py               # Save and fetch operations
-│
-└── schemas/
-    └── models.py             # Pydantic request/response models
+├── render.yaml                      # Render blueprint: backend, frontend, Postgres
+├── backend/
+│   ├── Dockerfile                   # runs `alembic upgrade head` then Uvicorn
+│   ├── requirements.txt
+│   ├── alembic/                     # async migrations (3 revisions)
+│   ├── app/
+│   │   ├── main.py                  # app, lifespan, CORS, request-ID middleware, error handler
+│   │   ├── config.py                # settings from environment / .env
+│   │   ├── api/routes.py            # /chat, /history, /sessions, /token
+│   │   ├── models/schemas.py        # Pydantic request/response models + input sanitising
+│   │   ├── db/                      # async engine/session, ORM models
+│   │   ├── core/logging_config.py   # request-ID logging, rotating file handler
+│   │   └── agent/
+│   │       ├── graph.py             # StateGraph assembly and routing
+│   │       ├── state.py             # TriageState, AgentTrace
+│   │       ├── orchestrator.py      # extraction, planning loop, final triage
+│   │       ├── tools.py             # clinical scorer, red-flag checker, specialist router, escalation
+│   │       ├── specialists.py       # cardiac / respiratory / mental / pediatric / general
+│   │       ├── safety.py            # second-pass reviewer (upgrade-only)
+│   │       └── nodes.py             # legacy single-agent nodes, kept for the baseline eval
+│   └── eval/                        # evaluation scripts (see below)
+└── frontend/                        # React chat UI with reasoning-trace panel
 ```
 
 ---
 
-##  Tech Stack
+## API
 
-| Layer | Technology | Notes |
+Base path: `/api`
+
+| Method | Endpoint | Rate limit | Description |
+|---|---|---|---|
+| `POST` | `/chat` | 20/min | Send a message; creates a session if `session_id` is omitted |
+| `GET` | `/history/{session_id}` | 30/min | Messages and latest triage outcome for a session |
+| `GET` | `/sessions` | 30/min | Paginated list of sessions (`limit`, `offset`) |
+| `POST` | `/token` | 10/min | Issues an anonymous UUID token |
+| `GET` | `/health` | – | Liveness check (served at `/health`, outside `/api`) |
+
+Clients send the token in an `X-User-Token` header. Interactive docs are served at `/docs`.
+
+**Request**
+
+```json
+{ "message": "Fever 38.5 and sore throat for 3 days. Severity 5/10. Age 32.", "session_id": null }
+```
+
+`message` must be 1–2000 characters; HTML-like tags and null bytes are stripped.
+
+**Response (abridged)**
+
+```json
+{
+  "session_id": "b3f1…",
+  "reply": "Triage Assessment — Moderate urgency\n…",
+  "is_complete": true,
+  "triage_outcome": {
+    "urgency": "moderate",
+    "confidence": 72,
+    "advice_text": "…",
+    "symptoms_summary": "…",
+    "specialist_called": "general"
+  },
+  "agent_trace": [
+    { "agent": "orchestrator", "action": "extract_symptoms", "…": "…" },
+    { "agent": "orchestrator", "action": "run_tool", "output": "Clinical score 3 → MODERATE risk …" },
+    { "agent": "safety_agent", "action": "approve", "…": "…" }
+  ]
+}
+```
+
+---
+
+## Data Model
+
+- **sessions**: `id` (UUID), `created_at`, `updated_at`, `user_identifier`
+- **messages**: `id`, `session_id` → sessions (cascade), `role` (user / assistant / system), `content`, `order`, `created_at`
+- **triage_outcomes**: `id`, `session_id` → sessions (cascade), `urgency` (enum), `confidence`, `advice_text`, `symptoms_summary`, `specialist_called`, `created_at`
+
+Schema changes are managed by Alembic. `create_all` runs only when `APP_ENV=development`.
+
+---
+
+## Setup & Run (local)
+
+**Prerequisites:** Python 3.11, Node 20, PostgreSQL, a [Groq API key](https://console.groq.com).
+
+1. **Database**
+   ```sql
+   CREATE DATABASE symptom_checker;
+   CREATE USER app_user WITH PASSWORD 'your_password';
+   GRANT ALL PRIVILEGES ON DATABASE symptom_checker TO app_user;
+   ```
+
+2. **Environment**: create a `.env` file in the repository root:
+   ```env
+   DATABASE_URL=postgresql://app_user:your_password@localhost/symptom_checker
+   GROQ_API_KEY=your_groq_api_key
+   APP_ENV=development
+   FRONTEND_URL=http://localhost:5173
+   ```
+   `postgresql://` URLs are automatically converted to `postgresql+asyncpg://`.
+
+3. **Backend**
+   ```bash
+   cd backend
+   python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
+   pip install -r requirements.txt
+   alembic upgrade head
+   uvicorn app.main:app --reload
+   ```
+   API docs: http://127.0.0.1:8000/docs
+
+4. **Frontend**
+   ```bash
+   cd frontend
+   npm install
+   npm run dev
+   ```
+   Set `VITE_API_URL` if the backend is not at `http://localhost:8000/api`.
+
+**Environment variables**
+
+| Variable | Required | Purpose |
 |---|---|---|
-| AI Agent | LangGraph + LangChain | Multi-node stateful graph |
-| LLM | Groq · `llama-3.1-8b-instant` | Free-tier inference |
-| API | FastAPI + Uvicorn | Async, auto-documented |
-| Database | PostgreSQL + SQLAlchemy | Persistent session storage |
-| Language | Python 3.11 | |
+| `DATABASE_URL` | yes | PostgreSQL connection string |
+| `GROQ_API_KEY` | yes | Groq API key |
+| `APP_ENV` | no (default `development`) | `development` enables `create_all` and SQL echo |
+| `FRONTEND_URL` | no | Allowed CORS origin(s), comma-separated; unset allows all origins |
+| `VITE_API_URL` | frontend build | Backend base URL |
 
 ---
 
-##  Setup & Run
+## Evaluation
 
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/YOUR_USERNAME/symptom-checker.git
-cd symptom-checker
-```
-
-### 2. Create and activate a virtual environment
+Scripts live in `backend/eval/` and call the live LLM, so they need a valid `GROQ_API_KEY`. Run them from `backend/`:
 
 ```bash
-python -m venv venv
-
-# Windows
-venv\Scripts\activate
-
-# Mac / Linux
-source venv/bin/activate
+python -m eval.baseline_single_agent_test   # single-agent baseline (legacy nodes)
+python -m eval.test_classification          # 15 cases across all four urgency levels; emergency false-negative rate
+python -m eval.test_llm_quality             # rule-based checks + LLM-as-judge tone (--runs N, --strict-urgency)
+python -m eval.test_consistency             # repeat-run consistency, edge cases, regressions, specialist routing
+python -m eval.test_latency                 # tool latency and per-node pipeline latency (PIPELINE_RUNS=N)
 ```
 
-### 3. Install dependencies
-
-```bash
-pip install fastapi uvicorn sqlalchemy psycopg2-binary python-dotenv \
-            langgraph langchain langchain-groq
-```
-
-### 4. Set up PostgreSQL
-
-```sql
-CREATE DATABASE symptom_checker;
-CREATE USER app_user WITH PASSWORD 'ur_password';
-GRANT ALL PRIVILEGES ON DATABASE symptom_checker TO app_user;
-```
-
-### 5. Configure environment variables
-
-Create a `.env` file in the project root:
-
-```env
-DATABASE_URL=postgresql://username:password@localhost/symptom_checker
-GROQ_API_KEY=your_groq_api_key
-```
-
-### 6. Start the server
-
-```bash
-uvicorn main:app --reload
-```
-
-### 7. Explore the API
-
-Open the auto-generated interactive docs at:
-**http://127.0.0.1:8000/docs**
+These are evaluation scripts, not a unit-test suite. They measure agreement with expected labels written by the author, **not clinical accuracy**.
 
 ---
 
-##  Sample Conversation
+## Deployment
 
-The agent maintains session state across turns, enabling a coherent multi-message triage flow.
-
-**Turn 1 — User reports symptoms**
-
-```json
-POST /chat
-{
-  "session_id": "session1",
-  "message": "I have a headache and fever"
-}
-```
-
-```json
-{
-  "reply": "How long have you had these symptoms and what is your temperature?",
-  "stage": "assess"
-}
-```
-
-**Turn 2 — User provides details → triage issued**
-
-```json
-POST /chat
-{
-  "session_id": "session1",
-  "message": "Since yesterday, fever is 102F"
-}
-```
-
-```json
-{
-  "reply": "Urgency: MEDIUM\nRest and stay hydrated. Take paracetamol for fever. If fever exceeds 103F or persists beyond 48hrs, see a doctor.",
-  "stage": "done"
-}
-```
+`render.yaml` provisions a backend web service, a frontend web service and a free PostgreSQL database. The backend start command runs `alembic upgrade head` before Uvicorn. Set `GROQ_API_KEY` and `FRONTEND_URL` manually in the Render dashboard. Dockerfiles are provided for both services.
 
 ---
 
+## Known Limitations
 
+**Clinical**
+- Not validated against clinical guidelines (e.g. Manchester Triage System, ESI) or reviewed by medical professionals. The clinical scorer is a simplified, NEWS2-style point system with author-chosen weights, not NEWS2.
+- The LLM can produce plausible but wrong assessments; temperature 0 reduces variance but does not remove it.
+- The evaluation set is small (15 classification cases) and self-labelled. A passing score shows consistency with expected outputs, not safety.
+- Red-flag and safety-override rules are English keyword matches over the conversation text. They do not handle negation ("no seizures"), paraphrases or other languages.
+- The agent asks follow-up questions only when it cannot extract any symptoms; otherwise it concludes with the information it has.
+- Escalation returns a fixed "contact a medical professional" message; there is no human review workflow.
+- No memory across sessions.
 
-##  API Reference
+**Security and reliability**
+- The anonymous UUID token is session scoping, not authentication. Ownership checks run only when the `X-User-Token` header is sent, and `/api/sessions` without a token lists all sessions.
+- No prompt-injection defences.
+- Rate limiting is in-memory and keyed on client IP.
+- Single LLM provider with no retry, fallback or circuit breaker; a Groq outage fails the request.
+- The database connection is held for the duration of the LLM-bound request, which limits concurrency.
 
-| Method | Endpoint | Description |
-|---|---|---|
-| `POST` | `/chat` | Submit a symptom message for a given session |
-| `GET` | `/history/{session_id}` | Retrieve full conversation history for a session |
+**Hosting**
+- Render free tier: the backend sleeps after inactivity and the free database has size and retention limits.
 
-Request and response schemas are defined in `schemas/models.py` and browsable at `/docs`.
+### Roadmap
+
+- Mandatory, server-validated authentication and owner-scoped queries
+- Negation-aware red-flag detection restricted to user messages
+- Gate conclusions on severity and duration so follow-up questions actually happen
+- Schema-validated structured output with retry
+- LLM retries, timeouts and a fallback provider
+- Unit tests with a mocked LLM, API tests and CI
+- Retrieval over triage guidelines to ground specialist advice
+- Clinician-labelled evaluation set
 
 ---
 
-## 👩 Author
+## Author
 
-**Navya Chhoker**  
+**Navya Chhoker**
